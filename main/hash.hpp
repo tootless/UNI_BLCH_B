@@ -1,17 +1,7 @@
 //v1.1 of hash function .https://github.com/tootless/UNI_BLCH_HF/tree/v.1.1
 //library also used for block.hpp
 #pragma once
-#include <iomanip>
-#include <fstream>
-#include <sstream>
-#include <string>
-#include <cstdint>
-#include <iostream>
-#include <array>
-#include <vector>
-#include <chrono>
-#include <random>
-#include <ctime>
+#include "lib.hpp"
 
 constexpr size_t state_wcount = 8; //8 * 32 bits = 256
 constexpr std::array<uint32_t, state_wcount> state_words = { //phi / (prime starting from 3) * 2^32
