@@ -7,14 +7,14 @@ private:
 	std::uint32_t sender_id;
 	std::uint32_t receiver_id;
 	std::uint64_t amount;
-	std::uint64_t nonce; //later on, for id
+	std::uint64_t sequence; //later on, for id
 	std::array<uint32_t, 8> transaction_id;
 public:
 	Transaction()
-		: transaction_id(get_transaction_id())
-		, sender_id()
+		: sender_id()
 		, receiver_id()
 		, amount()
+		, transaction_id(get_transaction_id())
 	{
 	};
 
