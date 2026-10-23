@@ -9,32 +9,30 @@ constexpr std::uint32_t protocol_version = 1;
 struct Block
 {
 private:
-	std::uint32_t version; //protocol version
-	std::uint64_t timestamp;
-	std::array<uint32_t, 8> prev_hash; //0 for genesis
-	std::uint64_t nonce = 0; //start at 0, increment by 1
+	std::uint32_t version = 0; //protocol version
+	std::uint64_t timestamp = 0;
+	std::array<uint32_t, 8> prev_hash = {}; //0s for genesis
+	std::uint64_t nonce_ = 0; //start at 0, increment by 1
 	std::uint64_t difficulty = 3; //starting hex 0 count
-	std::array<uint32_t, 8> block_hash;
+	std::array<uint32_t, 8> block_hash = {};
 	std::vector<Transaction> block_transactions; //sorted by user id (sender or receiver explicitly) perhaps for quicker search later
 	std::array<uint32_t, 8> tx_root; //hash of block's serialised transaction IDs
 	//std::vector<uint8_t> header;
 public:
-	Block() //ctor for genesis block
+	//ctor for genesis blocks
+	Block()
 		: version(get_version())
 		, timestamp(get_timestamp())
 		, prev_hash({})
 		//, header(serialise_header())
 		, block_transactions(get_gentransactions())
-		, block_hash(calculate_hash())
+		, block_hash(calculate_hash(nonce_))
 		, tx_root(get_txroot())
 	{};
 
-	Block(std::vector<Transaction> transactions, std::array<uint32_t,8> hash)
+	//ctor for miner
+	Block(std::vector<Transaction> transactions)
 		: block_transactions(transactions)
-		, timestamp(get_timestamp())
-		//, prev_hash() maybe you get this when the blockchain links the block to the rest of the chain
-		, nonce(get_nonce())
-		, block_hash(hash)
 		, tx_root(get_txroot())
 	{};
 
@@ -42,7 +40,9 @@ public:
 
 	inline const std::uint32_t get_version() { return protocol_version; }
 
-	inline const std::uint64_t get_nonce() { return nonce; }
+	inline const std::uint64_t get_nonce() { return nonce_; }
+
+	inline void set_nonce(std::uint64_t n) { nonce_ = n; }
 
 	inline const std::uint64_t get_difficulty() { return difficulty; }
 
@@ -72,7 +72,7 @@ public:
 
 	//header bytes serialised in this order, later templates will be used so it's easier
 //version, timestamp, ...
-	std::vector<uint8_t> serialise_header() const {
+	std::vector<uint8_t> serialise_header(std::uint64_t nonce) const {
 		std::vector<uint8_t> header_bytes = {}; //1 position 1 byte
 		size_t rshift_size = 8;
 		uint8_t mask = 0b11111111;
@@ -89,7 +89,7 @@ public:
 	}
 
 	//getter
-	std::array<uint32_t, 8> calculate_hash() const {
-		return hash_block(serialise_header());
+	std::array<uint32_t, 8> calculate_hash(std::uint64_t nonce) const {
+		return hash_block(serialise_header(nonce));
 	}
 };

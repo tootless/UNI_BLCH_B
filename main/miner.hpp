@@ -17,28 +17,40 @@ public:
 
 	//revalidate transaction pool (because of time passed and such), mine, construct block, initiate connection w blockchain
 
-	std::array<uint32_t, 8> construct_solution(std::uint64_t difficulty) {
-
-
-		return hash;
+	//extract one bit from position index
+	unsigned extract_bit(const std::array<uint32_t, 8>& hash, size_t index) {
+		size_t pos = 31 - (index % 32);
+		return (hash[index/32] >> pos) & 1u;
 	}
 
 	//create candidate (temporary) block, solve it's block hash
 	Block solve_puzzle() {
-		Block candidate_block = (transaction_pool, {});
-		//construct solution
-		std::uint64_t diff = candidate_block.get_difficulty();
-		std::array<uint32, 8> solution_hash = construct_solution(diff);
+		Block candidate_block(transaction_pool);
+		auto diff = candidate_block.get_difficulty();
+		auto candidate_nonce = candidate_block.get_nonce(); //0 at first
 
-		std::uint64_t nonce = candidate_block.get_nonce();
-		std::array<uint32_t, 8> candidate_hash = {};
 		do {
-			candidate_hash = candidate_block.calculate_hash();
-			if (candidate_hash == solution_hash) {
+			bool valid = true;
+			std::array<uint32_t, 8> candidate_hash = candidate_block.calculate_hash(candidate_nonce);
+
+			for (size_t i = 0; i < diff; ++i) {
+				if (extract_bit(candidate_hash, i) != 0) {
+					valid = false;
+					break;
+				}
+			}
+
+			if (valid) {
+				candidate_block.set_nonce(candidate_nonce);
 				return candidate_block;
 			}
-			++nonce;
-		} while(candidate_hash != solution_hash)
+			if (candidate_nonce == UINT64_MAX) break;
+
+			++candidate_nonce;
+		} while (true);
+
+		throw std::runtime_error("no more nonce space, puzzle not solved");
+		//can add other condition after
 	}
 
 	//void broadcast_block(Block mined_block) const {}
