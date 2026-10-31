@@ -1,5 +1,3 @@
-//sources: .https://www.geeksforgeeks.org/ethical-hacking/blockchain-proof-of-work-pow/
- 
 #pragma once
 #include "hash.hpp"
 #include "transaction.hpp"

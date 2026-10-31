@@ -1,44 +1,52 @@
 #pragma once
+
 #include "lib.hpp"
+#include "serialisation.hpp"
+#include <array>
+#include <cstdint>
+#include <vector>
 
 struct Transaction
 {
 private:
-	std::uint32_t sender_id;
-	std::uint32_t receiver_id;
-	std::uint64_t amount;
-	std::uint64_t sequence; //later on, for id
-	std::array<uint32_t, 8> transaction_id;
+    uint32_t sender_id;
+    uint32_t receiver_id;
+    uint64_t amount;
+    uint64_t sequence;
+    std::array<uint32_t, 8> transaction_id;
+
 public:
-	Transaction()
-		: sender_id()
-		, receiver_id()
-		, amount()
-		, transaction_id(get_transaction_id())
-	{
-	};
+    Transaction(
+        uint32_t sender,
+        uint32_t receiver,
+        uint64_t transaction_amount,
+        uint64_t sequence_number)
+        : sender_id(sender)
+        , receiver_id(receiver)
+        , amount(transaction_amount)
+        , sequence(sequence_number)
+        , transaction_id(get_transaction_id())
+    {
+    }
 
-	std::vector<uint8_t> serialise_transaction() const {
-		std::vector<uint8_t> transaction_bytes = {}; //1 position 1 byte
-		size_t rshift_size = 8;
-		uint8_t mask = 0b11111111;
+    std::vector<uint8_t> serialize_transaction() const
+    {
+        std::vector<uint8_t> bytes;
+        append_bits(bytes, sender_id);
+        append_bits(bytes, receiver_id);
+        append_bits(bytes, amount);
+        append_bits(bytes, sequence);
+        return bytes;
+    }
 
-		//push 1 byte of transaction metadata:
-		for (size_t i = 0; i < (sizeof(sender_id) * 8); i += rshift_size) { //research CHAR_BITS
-			transaction_bytes.push_back(static_cast<uint8_t>(sender_id >> i & mask));
-		}
-		for (size_t i = 0; i < (sizeof(receiver_id) * 8); i += rshift_size) {
-			transaction_bytes.push_back(static_cast<uint8_t>(receiver_id >> i & mask));
-		}
-		for (size_t i = 0; i < (sizeof(amount) * 8); i += rshift_size) {
-			transaction_bytes.push_back(static_cast<uint8_t>(amount >> i & mask));
-		}
+    std::array<uint32_t, 8> get_transaction_id() const
+    {
+        return hash_block(serialize_transaction());
+    }
 
-		return transaction_bytes;
-	}
-
-	std::array<uint32_t, 8> get_transaction_id() const{
-		auto transaction_bytes = serialise_transaction();
-		return hash_block(transaction_bytes);
-	}
+    uint32_t get_sender_id() const { return sender_id; }
+    uint32_t get_receiver_id() const { return receiver_id; }
+    uint64_t get_amount() const { return amount; }
+    uint64_t get_sequence() const { return sequence; }
+    const std::array<uint32_t, 8>& get_id() const { return transaction_id; }
 };
