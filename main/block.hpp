@@ -1,93 +1,91 @@
 #pragma once
 #include "hash.hpp"
 #include "transaction.hpp"
+#include "serialisation.hpp"
+#include <array>
+#include <chrono>
+#include <cstdint>
+#include <vector>
+#include <utility>
 
 constexpr std::uint32_t protocol_version = 1;
 
 struct Block
 {
 private:
-	std::uint32_t version = 0; //protocol version
-	std::uint64_t timestamp = 0;
-	std::array<uint32_t, 8> prev_hash = {}; //0s for genesis
-	std::uint64_t nonce_ = 0; //start at 0, increment by 1
-	std::uint64_t difficulty = 3; //starting hex 0 count
-	std::array<uint32_t, 8> block_hash = {};
-	std::vector<Transaction> block_transactions; //sorted by user id (sender or receiver explicitly) perhaps for quicker search later
-	std::array<uint32_t, 8> tx_root; //hash of block's serialised transaction IDs
-	//std::vector<uint8_t> header;
-public:
-	//ctor for genesis blocks
-	Block()
-		: version(get_version())
-		, timestamp(get_timestamp())
-		, prev_hash({})
-		//, header(serialise_header())
-		, block_transactions(get_gentransactions())
-		, block_hash(calculate_hash(nonce_))
-		, tx_root(get_txroot())
-	{};
+	uint32_t version;
+    uint64_t timestamp;
+    std::array<uint32_t, 8> prev_hash;
+    uint64_t nonce;
+    uint64_t difficulty;
+    std::vector<Transaction> block_transactions;
+    std::array<uint32_t, 8> tx_root;
 
-	//ctor for miner
-	Block(std::vector<Transaction> transactions)
-		: block_transactions(transactions)
-		, tx_root(get_txroot())
-	{};
-
-	std::vector<Transaction> get_gentransactions() { return {}; }
-
-	inline const std::uint32_t get_version() { return protocol_version; }
-
-	inline const std::uint64_t get_nonce() { return nonce_; }
-
-	inline void set_nonce(std::uint64_t n) { nonce_ = n; }
-
-	inline const std::uint64_t get_difficulty() { return difficulty; }
-
-	//unix epoch
-	const std::uint64_t get_timestamp() {
+	static uint64_t curr_timestamp(){
 		const auto curr_time = std::chrono::system_clock::now();
 		return std::chrono::duration_cast<std::chrono::seconds>(curr_time.time_since_epoch()).count();
 	}
+public:
 
-	std::array<uint32_t, 8> get_txroot() {
-		//concat all transactions, return hashed
-		std::vector<uint8_t> transactions_bytes = {};
-		size_t rshift_size = 8;
-		uint8_t mask = 0b11111111;
+	//ctor candidate block, genesis if everything 0/{}
+	Block(std::vector<Transaction> transactions, const std::array<uint32_t, 8>& previous_hash, uint64_t diff = 3)
+		: version(protocol_version)
+		, timestamp(curr_timestamp())
+		, prev_hash(previous_hash)
+		, nonce(0)
+		, difficulty(diff)
+		, block_transactions(std::move(transactions))
+		, tx_root{}
+	{
+		tx_root = get_tx_root();
+	}
 
+	const std::vector<Transaction>& get_transactions() const{
+		return block_transactions;
+	}
+
+	void set_nonce(uint64_t value) { 
+		nonce = value; 
+	}
+
+	uint64_t get_nonce() const { 
+		return nonce;
+	}
+
+	inline const std::uint64_t get_difficulty() { 
+		return difficulty; 
+	}
+
+	std::vector<uint8_t> serialise_header(uint64_t candidate_nonce) const{
+		std::vector<uint8_t> bytes;
+
+		append_bits(bytes, version);
+		append_bits(bytes, timestamp);
+		append_hash(bytes, prev_hash);
+		append_hash(bytes, tx_root);
+		append_bits(bytes, candidate_nonce);
+		append_bits(bytes, difficulty);
+
+		return bytes;
+	}
+
+	std::array<uint32_t, 8> calculate_hash(uint64_t candidate_nonce) const{
+		return hash_block(serialise_header(candidate_nonce));
+	}
+
+	std::array<uint32_t, 8> calculate_tx_root() const {
+		std::vector<uint8_t> bytes;
 		for (const Transaction& transaction : block_transactions) {
-			std::array<uint32_t, 8> transaction_id = transaction.get_transaction_id();
-
-			for (uint32_t byte_sample : transaction_id) {
-				for (size_t i = 0; i < (sizeof(byte_sample) * 8); i += rshift_size) {
-					transactions_bytes.push_back(static_cast<uint8_t>(byte_sample >> i & mask));
-				}
-			}
+			append_hash(bytes, transaction.get_id());
 		}
-		return hash_block(transactions_bytes);
+		return hash_block(bytes);
 	}
 
-	//header bytes serialised in this order, later templates will be used so it's easier
-//version, timestamp, ...
-	std::vector<uint8_t> serialise_header(std::uint64_t nonce) const {
-		std::vector<uint8_t> header_bytes = {}; //1 position 1 byte
-		size_t rshift_size = 8;
-		uint8_t mask = 0b11111111;
-
-		//push 1 byte of header metadata:
-		for (size_t i = 0; i < (sizeof(version) * 8); i += rshift_size) {
-			header_bytes.push_back(static_cast<uint8_t>(version >> i & mask));
-		}
-		for (size_t i = 0; i < (sizeof(timestamp) * 8); i += rshift_size) {
-			header_bytes.push_back(static_cast<uint8_t>(timestamp >> i & mask));
-		}
-
-		return header_bytes;
+	const std::array<uint32_t, 8>& get_prev_hash() const{
+		return prev_hash;
 	}
 
-	//getter
-	std::array<uint32_t, 8> calculate_hash(std::uint64_t nonce) const {
-		return hash_block(serialise_header(nonce));
+	const std::array<uint32_t, 8>& get_tx_root() const{
+		return tx_root;
 	}
 };

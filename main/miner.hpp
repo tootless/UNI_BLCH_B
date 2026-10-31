@@ -1,7 +1,7 @@
+#pragma once
 #include "hash.hpp"
 #include "transaction.hpp"
 #include "block.hpp"
-#include "lib.hpp"
 
 struct Miner
 {
@@ -12,10 +12,6 @@ private:
 	std::uint32_t transaction_threshold;
 	std::uint64_t time_passed; //inactivity timer
 public:
-	//validate every pending transaction
-	//bool validate_transaction() {}
-
-	//revalidate transaction pool (because of time passed and such), mine, construct block, initiate connection w blockchain
 
 	//extract one bit from position index
 	unsigned extract_bit(const std::array<uint32_t, 8>& hash, size_t index) {
@@ -24,16 +20,21 @@ public:
 	}
 
 	//create candidate (temporary) block, solve it's block hash
-	Block solve_puzzle() {
-		Block candidate_block(transaction_pool);
+	Block solve_puzzle(const std::array<uint32_t, 8>& previous_hash) {
+		Block candidate_block(transaction_pool, previous_hash);
+
 		auto diff = candidate_block.get_difficulty();
 		auto candidate_nonce = candidate_block.get_nonce(); //0 at first
+
+		if (diff > 64) {
+			throw std::runtime_error("difficulty bigger than 256bit hash");
+		}
 
 		do {
 			bool valid = true;
 			std::array<uint32_t, 8> candidate_hash = candidate_block.calculate_hash(candidate_nonce);
 
-			for (size_t i = 0; i < diff; ++i) {
+			for (size_t i = 0; i < diff * 4; ++i) { // 1 hex = 4 bits
 				if (extract_bit(candidate_hash, i) != 0) {
 					valid = false;
 					break;

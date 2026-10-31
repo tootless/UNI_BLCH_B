@@ -1,6 +1,5 @@
 #pragma once
-
-#include "lib.hpp"
+#include "hash.hpp"
 #include "serialisation.hpp"
 #include <array>
 #include <cstdint>

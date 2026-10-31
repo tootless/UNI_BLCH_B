@@ -1,4 +1,3 @@
-#include "lib.hpp"
 #include "block.hpp"
 
 struct Blockchain
