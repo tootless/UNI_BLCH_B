@@ -27,7 +27,7 @@ private:
 	std::set<SequenceKey> used_sequences;
 
 public:
-	using Balances = std::unordered_map<std::uint32_t, std::uint64_t>;
+	using Balances = std::unordered_map<std::uint32_t, std::uint64_t>; //sender/receiver id and amount
 
 	//check transaction fields and ids
 	bool validate_transaction(const Transaction& transaction, const Balances& balances, std::string& reason) const{
