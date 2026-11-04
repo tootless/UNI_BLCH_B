@@ -1,8 +1,5 @@
-
 #pragma once
-
 #include "transaction.hpp"
-
 #include <cstdint>
 #include <limits>
 #include <string>

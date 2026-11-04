@@ -1,4 +1,3 @@
-
 #pragma once
 #include "transaction.hpp"
 #include "block.hpp"
