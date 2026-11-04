@@ -27,7 +27,20 @@ private:
 	}
 public:
 
-	//ctor candidate block, genesis if everything 0/{}
+	//ctor genesis block
+	Block()
+		: version(protocol_version)
+		, timestamp(curr_timestamp())
+		, prev_hash{}
+		, nonce(0)
+		, difficulty(0)
+		, block_transactions{}
+		, tx_root{}
+	{
+		tx_root = calculate_tx_root();
+	}
+
+	//ctor candidate block
 	Block(std::vector<Transaction> transactions, const std::array<uint32_t, 8>& previous_hash, uint64_t diff = 3)
 		: version(protocol_version)
 		, timestamp(curr_timestamp())
@@ -37,7 +50,7 @@ public:
 		, block_transactions(std::move(transactions))
 		, tx_root{}
 	{
-		tx_root = get_tx_root();
+		tx_root = calculate_tx_root();
 	}
 
 	const std::vector<Transaction>& get_transactions() const{
@@ -52,7 +65,7 @@ public:
 		return nonce;
 	}
 
-	inline const std::uint64_t get_difficulty() { 
+	std::uint64_t get_difficulty() const { 
 		return difficulty; 
 	}
 
@@ -79,6 +92,26 @@ public:
 			append_hash(bytes, transaction.get_id());
 		}
 		return hash_block(bytes);
+	}
+
+	std::array<std::uint32_t, 8> get_hash() const {
+		return calculate_hash(nonce);
+	}
+
+	bool is_valid_pow() const {
+		auto hash = get_hash();
+
+		if (difficulty > 64)
+			return false;
+
+		for (std::size_t i = 0; i < difficulty * 4; ++i) {
+			std::size_t pos = 31 - (i % 32);
+
+			if (((hash[i / 32] >> pos) & 1u) != 0)
+				return false;
+		}
+
+		return true;
 	}
 
 	const std::array<uint32_t, 8>& get_prev_hash() const{
