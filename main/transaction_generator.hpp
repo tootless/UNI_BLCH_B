@@ -7,11 +7,9 @@
 #include <stdexcept>
 #include <unordered_map>
 
-inline std::vector<Transaction> generate_transactions(const std::vector<User>& users, std::size_t count = 10000) {
+inline std::vector<Transaction> generate_transactions(const std::vector<User>& users, std::size_t count = 10000,std::mt19937& rand) {
 	std::vector<Transaction> transactions;
 	transactions.reserve(count);
-
-	std::mt19937 rand(std::random_device{}());
 
 	//randomly select users
 	std::uniform_int_distribution<std::size_t> user_distribution(0, users.size() - 1);

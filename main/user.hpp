@@ -31,12 +31,10 @@ public:
 	std::uint64_t get_balance() const { return balance; }
 };
 
-inline std::vector<User> generate_users(std::size_t count = 1000)
+inline std::vector<User> generate_users(std::size_t count = 1000, std::mt19937& rand)
 {
 	std::vector<User> users;
 	users.reserve(count);
-
-	std::mt19937 rand(std::random_device{}());
 
 	std::uniform_int_distribution<std::uint64_t> balance_distribution(100, 1000000);
 

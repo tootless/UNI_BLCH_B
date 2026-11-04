@@ -11,23 +11,13 @@
 #include <unordered_map>
 #include <chrono>
 
-std::string hash_to_string(const std::array<std::uint32_t, 8>& hash)
-{
-    std::ostringstream output;
-    output << std::hex << std::setfill('0');
-
-    for (std::uint32_t word : hash)
-        output << std::setw(8) << word;
-
-    return output.str();
-}
-
 int main()
 {
     const auto program_start = std::chrono::steady_clock::now();
+    const unsigned int seed = 3719;
+    std::mt19937 rand(seed);
 
-    std::vector<User> users = generate_users(1000);
-
+    std::vector<User> users = generate_users(1000,rand);
     //initialise
     Miner::Balances balances;
     for (const User& user : users)
@@ -37,8 +27,7 @@ int main()
     for (const auto& account : balances)
         initial_total_balance += account.second;
 
-    std::vector<Transaction> transactions =
-        generate_transactions(users, 10000);
+    std::vector<Transaction> transactions = generate_transactions(users, 10000,rand);
 
     //accept or reject from mining transaction pool
     Miner miner;
@@ -80,9 +69,9 @@ int main()
         std::cout << "\n--- Priimtas blokas ---\n";
         std::cout << "Height: " << blockchain.get_size() - 1 << '\n';
         std::cout << "Transakciju sk.: " << accepted_block.get_transactions().size() << '\n';
-        std::cout << "prev_hash: " << hash_to_string(accepted_block.get_prev_hash()) << '\n';
-        std::cout << "tx_root: " << hash_to_string(accepted_block.get_tx_root()) << '\n';
-        std::cout << "Bloko hash: "  << hash_to_string(accepted_block.get_hash()) << '\n';
+        std::cout << "prev_hash: " << to_hex(accepted_block.get_prev_hash()) << '\n';
+        std::cout << "tx_root: " << to_hex(accepted_block.get_tx_root()) << '\n';
+        std::cout << "Bloko hash: "  << to_hex(accepted_block.get_hash()) << '\n';
         std::cout << "Difficulty: " << accepted_block.get_difficulty() << '\n';
         std::cout << "Nonce: " << accepted_block.get_nonce() << '\n';
         std::cout << "Bandymu sk.: " << miner.get_last_attempts() << '\n';
