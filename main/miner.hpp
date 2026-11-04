@@ -29,7 +29,7 @@ private:
 	std::set<SequenceKey> used_sequences;
 
 public:
-	using Balances = BalanceState; //sender/receiver id and amount
+	using Balances = std::unordered_map<std::uint32_t, std::uint64_t>;
 
 	//add valid transaction to pool
 	bool add_transaction(const Transaction& transaction, const Balances& balances, std::string& reason) {
