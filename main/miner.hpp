@@ -13,6 +13,7 @@
 #include <vector>
 #include <stdexcept>
 #include <functional>
+#include <chrono>
 
 struct Miner
 {
@@ -26,6 +27,9 @@ private:
 
 	using SequenceKey = std::pair<std::uint32_t, std::uint64_t>;
 	std::set<SequenceKey> used_sequences;
+
+	std::uint64_t last_attempts = 0;
+	double last_mining_seconds = 0.0;
 
 public:
 	using Balances = std::unordered_map<std::uint32_t, std::uint64_t>;
@@ -58,20 +62,27 @@ public:
 
 	//create candidate block and solve its block hash
 	Block solve_puzzle(const std::vector<Transaction>& transactions, const std::array<std::uint32_t, 8>& previous_hash,
-		std::uint64_t difficulty = 3) const {
+		std::uint64_t difficulty = 3){
 		Block candidate_block(transactions, previous_hash, difficulty);
 
 		if (difficulty > 64)
 			throw std::runtime_error("difficulty bigger than 256bit hash");
 
+		last_attempts = 0;
+		const auto start = std::chrono::steady_clock::now();
 		auto candidate_nonce = candidate_block.get_nonce();
 
 		do {
 			candidate_block.set_nonce(candidate_nonce);
+			++last_attempts;
 
 			//block pow
-			if (candidate_block.is_valid_pow())
+			if (candidate_block.is_valid_pow()) {
+				const auto end = std::chrono::steady_clock::now();
+				last_mining_seconds = std::chrono::duration<double>(end - start).count();
+
 				return candidate_block;
+			}
 
 			if (candidate_nonce == std::numeric_limits<std::uint64_t>::max())
 				break;
@@ -79,6 +90,9 @@ public:
 			++candidate_nonce;
 
 		} while (true);
+
+		const auto end = std::chrono::steady_clock::now();
+		last_mining_seconds = std::chrono::duration<double>(end - start).count();
 
 		throw std::runtime_error("no more nonce space, puzzle not solved");
 	}
@@ -175,4 +189,8 @@ public:
 	const std::vector<Transaction>& get_transaction_pool() const {
 		return transaction_pool;
 	}
+
+	//laiko matavimai
+	std::uint64_t get_last_attempts() const { return last_attempts; }
+	double get_last_mining_seconds() const { return last_mining_seconds; }
 };
