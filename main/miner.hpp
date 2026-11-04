@@ -1,6 +1,8 @@
+
 #pragma once
 #include "transaction.hpp"
 #include "block.hpp"
+#include "transaction_validate.hpp"
 #include <set>
 #include <utility>
 #include <algorithm>
@@ -27,41 +29,17 @@ private:
 	std::set<SequenceKey> used_sequences;
 
 public:
-	using Balances = std::unordered_map<std::uint32_t, std::uint64_t>;
-
-	//check transaction fields and ids
-	bool validate_transaction(const Transaction& transaction, const Balances& balances, std::string& reason) const{
-		if (transaction.get_sender_id() == transaction.get_receiver_id()) {
-			reason = "sender and receiver are the same";
-			return false;
-		}
-
-		if (transaction.get_amount() <= 0) {
-			reason = "amount must be positive";
-			return false;
-		}
-
-		if (balances.find(transaction.get_sender_id()) == balances.end()) {
-			reason = "sender does not exist";
-			return false;
-		}
-
-		if (balances.find(transaction.get_receiver_id()) == balances.end()) {
-			reason = "receiver does not exist";
-			return false;
-		}
-
-		if (!transaction.is_id_valid()) {
-			reason = "transaction ID is invalid";
-			return false;
-		}
-
-		return true;
-	}
+	using Balances = BalanceState; //sender/receiver id and amount
 
 	//add valid transaction to pool
-	bool add_transaction(const Transaction& transaction, const Balances& balances, std::string& reason){
-		if (!validate_transaction(transaction, balances, reason)) return false;
+	bool add_transaction(const Transaction& transaction, const Balances& balances, std::string& reason) {
+		Balances temporary_balances = balances;
+		TxValidation validation = apply_transaction(transaction, temporary_balances);
+
+		if (!validation.valid) {
+			reason = validation.reason;
+			return false;
+		}
 
 		SequenceKey key{
 			transaction.get_sender_id(),
@@ -75,30 +53,6 @@ public:
 
 		used_sequences.insert(key);
 		transaction_pool.push_back(transaction);
-
-		return true;
-	}
-
-	//apply transaction to a temporary or verified balance state
-	bool apply_transaction(const Transaction& transaction, Balances& balances, std::string& reason) const {
-		if (!validate_transaction(transaction, balances, reason)) return false;
-
-		const auto sender = transaction.get_sender_id();
-		const auto receiver = transaction.get_receiver_id();
-		const auto amount = transaction.get_amount();
-
-		if (balances.at(sender) < amount) {
-			reason = "insufficient balance";
-			return false;
-		}
-
-		if (balances.at(receiver) > (std::numeric_limits<std::uint64_t>::max() - amount)) {
-			reason = "receiver balance overflow";
-			return false;
-		}
-
-		balances.at(sender) -= amount;
-		balances.at(receiver) += amount;
 
 		return true;
 	}
@@ -120,7 +74,7 @@ public:
 			if (candidate_block.is_valid_pow())
 				return candidate_block;
 
-			if (candidate_nonce == UINT64_MAX)
+			if (candidate_nonce == std::numeric_limits<std::uint64_t>::max())
 				break;
 
 			++candidate_nonce;
@@ -149,9 +103,9 @@ public:
 		for (std::size_t index : pool_indices) {
 			if (pending_transactions.size() >= transaction_threshold) break;
 
-			std::string reason;
+			TxValidation validation = apply_transaction(transaction_pool[index], temporary_balances);
 
-			if (apply_transaction(transaction_pool[index], temporary_balances, reason)) {
+			if (validation.valid) {
 				pending_transactions.push_back(transaction_pool[index]);
 				included_indices.push_back(index);
 			}
@@ -191,10 +145,10 @@ public:
 
 		if (valid_block) {
 			for (const Transaction& transaction : mined_block.get_transactions()) {
-				std::string reason;
+				TxValidation validation = apply_transaction(transaction, verified_balances);
 
-				if (!apply_transaction(transaction, verified_balances, reason)) {
-					std::cerr << "Mined block rejected: " << reason << '\n';
+				if (!validation.valid) {
+					std::cerr << "Mined block rejected: " << validation.reason << '\n';
 					valid_block = false;
 					break;
 				}

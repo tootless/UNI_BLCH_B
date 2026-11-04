@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include "transaction.hpp"
@@ -15,7 +16,7 @@ struct TxValidation
     std::string reason;
 };
 
-TxValidation apply_transaction(const Transaction& tx, BalanceState& state)
+inline TxValidation apply_transaction(const Transaction& tx, BalanceState& state)
 {
     const uint32_t sender = tx.get_sender_id();
     const uint32_t receiver = tx.get_receiver_id();
@@ -27,6 +28,10 @@ TxValidation apply_transaction(const Transaction& tx, BalanceState& state)
 
     if (amount == 0) {
         return { false, "amount has to be more than 0" };
+    }
+
+    if (!tx.is_id_valid()) {
+        return { false, "transaction ID is invalid" };
     }
 
     auto sender_it = state.find(sender);
@@ -42,6 +47,10 @@ TxValidation apply_transaction(const Transaction& tx, BalanceState& state)
 
     if (sender_it->second < amount) {
         return { false, "not enough balance" };
+    }
+
+    if (receiver_it->second > std::numeric_limits<uint64_t>::max() - amount) {
+        return { false, "receiver balance overflow" };
     }
 
     //update balances
