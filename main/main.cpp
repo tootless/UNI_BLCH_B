@@ -17,7 +17,7 @@ int main()
     const unsigned int seed = 3719;
     std::mt19937 rand(seed);
 
-    std::vector<User> users = generate_users(1000,rand);
+    std::vector<User> users = generate_users(rand,1000);
     //initialise
     Miner::Balances balances;
     for (const User& user : users)
@@ -27,7 +27,7 @@ int main()
     for (const auto& account : balances)
         initial_total_balance += account.second;
 
-    std::vector<Transaction> transactions = generate_transactions(users, 10000,rand);
+    std::vector<Transaction> transactions = generate_transactions(users, rand,10000);
 
     //accept or reject from mining transaction pool
     Miner miner;

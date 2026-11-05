@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <unordered_map>
 
-inline std::vector<Transaction> generate_transactions(const std::vector<User>& users, std::size_t count = 10000,std::mt19937& rand) {
+inline std::vector<Transaction> generate_transactions(const std::vector<User>& users, std::mt19937& rand, std::size_t count = 10000) {
 	std::vector<Transaction> transactions;
 	transactions.reserve(count);
 

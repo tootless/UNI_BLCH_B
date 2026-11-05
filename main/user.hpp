@@ -31,7 +31,7 @@ public:
 	std::uint64_t get_balance() const { return balance; }
 };
 
-inline std::vector<User> generate_users(std::size_t count = 1000, std::mt19937& rand)
+inline std::vector<User> generate_users(std::mt19937& rand, std::size_t count = 1000)
 {
 	std::vector<User> users;
 	users.reserve(count);
