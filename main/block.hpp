@@ -82,7 +82,7 @@ public:
 		return bytes;
 	}
 
-	std::array<uint32_t, 8> calculate_hash(uint64_t candidate_nonce) const{
+	std::array<std::uint32_t, 8> calculate_hash(uint64_t candidate_nonce) const{
 		return hash_block(serialise_header(candidate_nonce));
 	}
 

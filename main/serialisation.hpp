@@ -5,6 +5,7 @@
 #include <type_traits>
 #include <cstddef>
 
+//appends all bits of type T value to the serialised output
 template <typename T>
 void append_bits(std::vector<uint8_t>& out, T value)
 {
@@ -14,11 +15,10 @@ void append_bits(std::vector<uint8_t>& out, T value)
     }
 }
 
-inline void append_hash(
-    std::vector<uint8_t>& out,
-    const std::array<uint32_t, 8>& hash)
-{
+//appends all bits of a hash to the serialised output
+inline void append_hash(std::vector<uint8_t>& out, const std::array<uint32_t, 8>& hash){
     for (uint32_t word : hash) {
         append_bits(out, word);
     }
 }
+
