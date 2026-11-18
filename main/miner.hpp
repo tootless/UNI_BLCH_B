@@ -37,7 +37,15 @@ public:
 	using Balances = std::unordered_map<std::uint32_t, std::uint64_t>;
 
 	//add valid transaction to pool
-	bool add_transaction(const Transaction& transaction, const Balances& balances, std::string& reason) {
+	bool add_transaction(const Transaction& transaction, const Balances& balances,
+		const std::set<Hash>& included_transaction_ids, std::string& reason)
+	{
+		//check if tx id in blockchain
+		if (included_transaction_ids.find(transaction.get_id()) != included_transaction_ids.end()) {
+			reason = "transaction ID already included in blockchain";
+			return false;
+		}
+
 		Balances temporary_balances = balances;
 		TxValidation validation = apply_transaction(transaction, temporary_balances);
 
@@ -134,6 +142,9 @@ public:
 
 			const Transaction& tx = transaction_pool[index];
 			const Hash& tx_id = tx.get_id();
+
+			if (!tx.is_id_valid())
+				continue;
 
 			if (included_transaction_ids.find(tx_id) != included_transaction_ids.end())
 				continue;
