@@ -1,19 +1,21 @@
+
 #pragma once
 #include "hash.hpp"
 #include "transaction.hpp"
 #include "serialisation.hpp"
+#include "merkle_tree.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
 #include <vector>
 #include <utility>
 
-constexpr std::uint32_t protocol_version = 1;
+constexpr std::uint32_t protocol_version = 2;
 
 struct Block
 {
 private:
-	uint32_t version;
+    uint32_t version;
     uint64_t timestamp;
     std::array<uint32_t, 8> prev_hash;
     uint64_t nonce;
@@ -21,104 +23,119 @@ private:
     std::vector<Transaction> block_transactions;
     std::array<uint32_t, 8> tx_root;
 
-	static uint64_t curr_timestamp(){
-		const auto curr_time = std::chrono::system_clock::now();
-		return std::chrono::duration_cast<std::chrono::seconds>(curr_time.time_since_epoch()).count();
-	}
+    static uint64_t curr_timestamp() {
+        const auto curr_time = std::chrono::system_clock::now();
+        return std::chrono::duration_cast<std::chrono::seconds>(
+            curr_time.time_since_epoch()
+        ).count();
+    }
+
 public:
 
-	//ctor genesis block
-	Block()
-		: version(protocol_version)
-		, timestamp(curr_timestamp())
-		, prev_hash{}
-		, nonce(0)
-		, difficulty(0)
-		, block_transactions{}
-		, tx_root{}
-	{
-		tx_root = calculate_tx_root();
-	}
+    //ctor genesis block
+    Block()
+        : version(protocol_version)
+        , timestamp(curr_timestamp())
+        , prev_hash{}
+        , nonce(0)
+        , difficulty(0)
+        , block_transactions{}
+        , tx_root{}
+    {
+        tx_root = calculate_tx_root();
+    }
 
-	//ctor candidate block
-	Block(std::vector<Transaction> transactions, const std::array<uint32_t, 8>& previous_hash, uint64_t diff = 3)
-		: version(protocol_version)
-		, timestamp(curr_timestamp())
-		, prev_hash(previous_hash)
-		, nonce(0)
-		, difficulty(diff)
-		, block_transactions(std::move(transactions))
-		, tx_root{}
-	{
-		tx_root = calculate_tx_root();
-	}
+    //ctor candidate block
+    Block(
+        std::vector<Transaction> transactions,
+        const std::array<uint32_t, 8>& previous_hash,
+        uint64_t diff = 3
+    )
+        : version(protocol_version)
+        , timestamp(curr_timestamp())
+        , prev_hash(previous_hash)
+        , nonce(0)
+        , difficulty(diff)
+        , block_transactions(std::move(transactions))
+        , tx_root{}
+    {
+        tx_root = calculate_tx_root();
+    }
 
-	const std::vector<Transaction>& get_transactions() const{
-		return block_transactions;
-	}
+    const std::vector<Transaction>& get_transactions() const {
+        return block_transactions;
+    }
 
-	void set_nonce(uint64_t value) { 
-		nonce = value; 
-	}
+    void set_nonce(uint64_t value) {
+        nonce = value;
+    }
 
-	uint64_t get_nonce() const { 
-		return nonce;
-	}
+    uint64_t get_nonce() const {
+        return nonce;
+    }
 
-	std::uint64_t get_difficulty() const { 
-		return difficulty; 
-	}
+    std::uint64_t get_difficulty() const {
+        return difficulty;
+    }
 
-	std::vector<uint8_t> serialise_header(uint64_t candidate_nonce) const{
-		std::vector<uint8_t> bytes;
+    std::uint32_t get_version() const {
+        return version;
+    }
 
-		append_bits(bytes, version);
-		append_bits(bytes, timestamp);
-		append_hash(bytes, prev_hash);
-		append_hash(bytes, tx_root);
-		append_bits(bytes, candidate_nonce);
-		append_bits(bytes, difficulty);
+    std::vector<uint8_t> serialise_header(uint64_t candidate_nonce) const {
+        std::vector<uint8_t> bytes;
 
-		return bytes;
-	}
+        append_bits(bytes, version);
+        append_bits(bytes, timestamp);
+        append_hash(bytes, prev_hash);
+        append_hash(bytes, tx_root);
+        append_bits(bytes, candidate_nonce);
+        append_bits(bytes, difficulty);
 
-	std::array<std::uint32_t, 8> calculate_hash(uint64_t candidate_nonce) const{
-		return hash_block(serialise_header(candidate_nonce));
-	}
+        return bytes;
+    }
 
-	std::array<uint32_t, 8> calculate_tx_root() const {
-		std::vector<uint8_t> bytes;
-		for (const Transaction& transaction : block_transactions) {
-			append_hash(bytes, transaction.get_id());
-		}
-		return hash_block(bytes);
-	}
+    std::array<std::uint32_t, 8> calculate_tx_root() const {
+        std::vector<Hash> transaction_ids;
+        transaction_ids.reserve(block_transactions.size());
 
-	std::array<std::uint32_t, 8> get_hash() const {
-		return calculate_hash(nonce);
-	}
+        for (const Transaction& transaction : block_transactions) {
+            transaction_ids.push_back(transaction.get_id());
+        }
 
-	bool is_valid_pow() const {
-		auto hash = get_hash();
+        MerkleTree merkle_tree(transaction_ids);
+        return merkle_tree.get_root();
+    }
 
-		if (difficulty > 64)
-			return false;
+    std::array<std::uint32_t, 8> get_hash() const {
+        return calculate_hash(nonce);
+    }
 
-		for (std::size_t i = 0; i < difficulty * 4; ++i) {
-			std::size_t pos = 31 - (i % 32);
+    std::array<std::uint32_t, 8> calculate_hash(uint64_t candidate_nonce) const {
+        return hash_block(serialise_header(candidate_nonce));
+    }
 
-			if (((hash[i / 32] >> pos) & 1u) != 0)
-				return false;
-		}
+    bool is_valid_pow() const {
+        auto hash = get_hash();
 
-		return true;
-	}
+        if (difficulty > 64)
+            return false;
 
-	const std::array<uint32_t, 8>& get_prev_hash() const{
-		return prev_hash;
-	}
+        for (std::size_t i = 0; i < difficulty * 4; ++i) {
+            std::size_t pos = 31 - (i % 32);
 
-	const std::array<uint32_t, 8>& get_tx_root() const{
-		return tx_root;
-	}
+            if (((hash[i / 32] >> pos) & 1u) != 0)
+                return false;
+        }
+
+        return true;
+    }
+
+    const std::array<uint32_t, 8>& get_prev_hash() const {
+        return prev_hash;
+    }
+
+    const std::array<uint32_t, 8>& get_tx_root() const {
+        return tx_root;
+    }
 };
