@@ -18,6 +18,8 @@
 struct Miner
 {
 private:
+	using Hash = std::array<std::uint32_t, 8>;
+
 	std::vector<Transaction> pending_transactions; //candidate block transactions
 	std::vector<Transaction> transaction_pool; //validated transactions
 
@@ -106,27 +108,29 @@ public:
 	}
 
 	//up to 100 transactions, validate in order, mine, revalidate and commit
-	bool mine_next_block(Balances& balances, const std::array<std::uint32_t, 8>& previous_hash, 
+
+	bool mine_next_block(
+		const Balances& balances, const std::array<std::uint32_t, 8>& previous_hash,
 		const std::set<Hash>& included_transaction_ids, Block& accepted_block, 
-		std::uint64_t difficulty = 3) 
+		Balances& proposed_balances, std::vector<size_t>& included_indices, 
+		std::uint64_t difficulty = 3)
 	{
 		pending_transactions.clear();
+		included_indices.clear();
 
-		//random selection of transactions, not shuffling transaction_pool 
-		std::vector<std::size_t> pool_indices(transaction_pool.size());
+		std::vector<size_t> pool_indices(transaction_pool.size());
 
-		for (std::size_t i = 0; i < pool_indices.size(); ++i) pool_indices[i] = i;
+		for (size_t i = 0; i < pool_indices.size(); ++i)
+			pool_indices[i] = i;
 
 		std::shuffle(pool_indices.begin(), pool_indices.end(), rng);
 
-		//validate temporary candidate transactions
 		Balances temporary_balances = balances;
-
-		std::vector<std::size_t> included_indices;
 		std::set<Hash> candidate_transaction_ids;
 
-		for (std::size_t index : pool_indices) {
-			if (pending_transactions.size() >= transaction_threshold) break;
+		for (size_t index : pool_indices) {
+			if (pending_transactions.size() >= transaction_threshold)
+				break;
 
 			const Transaction& tx = transaction_pool[index];
 			const Hash& tx_id = tx.get_id();
@@ -148,64 +152,64 @@ public:
 			}
 		}
 
-		//return if done
-		if (pending_transactions.empty()) {
-			std::cerr << "no more valid transactions exist\n";
+		if (pending_transactions.empty())
 			return false;
-		}
 
-		//mine candidate
-		Block mined_block = solve_puzzle(pending_transactions, previous_hash, difficulty);
+		Block mined_block = solve_puzzle(
+			pending_transactions,
+			previous_hash,
+			difficulty
+		);
 
-		//revalidate mined block
 		bool valid_block = true;
 
-		if (mined_block.get_prev_hash() != previous_hash) {
-			std::cerr << "Mined block rejected: incorrect previous hash\n";
+		if (mined_block.get_prev_hash() != previous_hash)
 			valid_block = false;
-		}
 
-		if (!mined_block.is_valid_pow()) {
-			std::cerr << "Mined block rejected: invalid pow\n";
+		if (!mined_block.is_valid_pow())
 			valid_block = false;
-		}
 
-		if (mined_block.calculate_tx_root() != mined_block.get_tx_root()) {
-			std::cerr << "Mined block rejected: invalid tx_root \n";
+		if (mined_block.calculate_tx_root() != mined_block.get_tx_root())
 			valid_block = false;
-		}
 
-		//re-validate transactions (state has changed)
+		// Verify transactions again using a fresh temporary state.
 		Balances verified_balances = balances;
 
 		if (valid_block) {
-			for (const Transaction& transaction : mined_block.get_transactions()) {
-				TxValidation validation = apply_transaction(transaction, verified_balances);
+			for (const Transaction& tx : mined_block.get_transactions()) {
+				TxValidation validation = apply_transaction(tx, verified_balances);
 
 				if (!validation.valid) {
-					std::cerr << "Mined block rejected: " << validation.reason << '\n';
 					valid_block = false;
 					break;
 				}
 			}
 		}
 
-		if (!valid_block) return false;
+		if (!valid_block)
+			return false;
 
-		//commit revalidated (verified) transactions
-		balances = std::move(verified_balances);
-		accepted_block = mined_block;
-
-		//Remove included transactions; keep temporarily invalid ones.
-		std::sort(included_indices.begin(), included_indices.end(), std::greater<std::size_t>());
-
-		for (std::size_t index : included_indices)
-			transaction_pool.erase(transaction_pool.begin() + index);
-
-		pending_transactions.clear();
+		// Return proposed state without modifying real balances or pool.
+		proposed_balances = std::move(verified_balances);
+		accepted_block = std::move(mined_block);
 
 		return true;
 	}
+
+	void commit_mined_transactions(const std::vector<size_t>& included_indices)
+	{
+		std::vector<size_t> sorted_indices = included_indices;
+
+		std::sort(sorted_indices.begin(), sorted_indices.end(), std::greater<size_t>());
+
+		for (size_t index : sorted_indices) {
+			if (index < transaction_pool.size())
+				transaction_pool.erase(transaction_pool.begin() + index);
+		}
+
+		pending_transactions.clear();
+	}
+
 
 	//get remaining transaction pool
 	const std::vector<Transaction>& get_transaction_pool() const {
