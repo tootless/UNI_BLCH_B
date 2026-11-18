@@ -8,10 +8,10 @@
 #include <array>
 #include <stdexcept>
 
-using Hash = std::array<std::uint32_t, 8>; //will have to refactor rest of code with this later
-
 struct Node {
 private:
+	using Hash = std::array<std::uint32_t, 8>;
+
 	//left right children
 	std::unique_ptr<Node> left;
 	std::unique_ptr<Node> right;

@@ -44,6 +44,14 @@ public:
 			return false;
 		}
 
+		//transaction ids have to be unique in block
+		for (const Transaction& pooled_tx : transaction_pool) {
+			if (pooled_tx.get_id() == transaction.get_id()) {
+				reason = "duplicate transaction ID in pool";
+				return false;
+			}
+		}
+
 		SequenceKey key{
 			transaction.get_sender_id(),
 			transaction.get_sequence()
@@ -98,7 +106,10 @@ public:
 	}
 
 	//up to 100 transactions, validate in order, mine, revalidate and commit
-	bool mine_next_block(Balances& balances, const std::array<std::uint32_t, 8>& previous_hash, Block& accepted_block, std::uint64_t difficulty = 3) {
+	bool mine_next_block(Balances& balances, const std::array<std::uint32_t, 8>& previous_hash, 
+		const std::set<Hash>& included_transaction_ids, Block& accepted_block, 
+		std::uint64_t difficulty = 3) 
+	{
 		pending_transactions.clear();
 
 		//random selection of transactions, not shuffling transaction_pool 
@@ -112,18 +123,29 @@ public:
 		Balances temporary_balances = balances;
 
 		std::vector<std::size_t> included_indices;
+		std::set<Hash> candidate_transaction_ids;
 
 		for (std::size_t index : pool_indices) {
 			if (pending_transactions.size() >= transaction_threshold) break;
 
-			TxValidation validation = apply_transaction(transaction_pool[index], temporary_balances);
+			const Transaction& tx = transaction_pool[index];
+			const Hash& tx_id = tx.get_id();
+
+			if (included_transaction_ids.find(tx_id) != included_transaction_ids.end())
+				continue;
+
+			if (!candidate_transaction_ids.insert(tx_id).second)
+				continue;
+
+			TxValidation validation = apply_transaction(tx, temporary_balances);
 
 			if (validation.valid) {
-				pending_transactions.push_back(transaction_pool[index]);
+				pending_transactions.push_back(tx);
 				included_indices.push_back(index);
 			}
-
-			//Temporarily invalid transactions remain in the pool.
+			else {
+				candidate_transaction_ids.erase(tx_id);
+			}
 		}
 
 		//return if done
