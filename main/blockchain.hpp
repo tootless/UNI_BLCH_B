@@ -13,14 +13,27 @@ private:
 
     std::vector<Block> blockchain_blocks;
     std::set<Hash> included_transaction_ids; //here, hash = transaction id
+    std::uint64_t required_difficulty;
 public:
 
     //blockchain ctor with genesis block
-    Blockchain() {
+    //when miner is called, use the same constexpr difficulty for miner as you did for blockchain
+    Blockchain(std::uint64_t difficulty = 3)
+        : required_difficulty(difficulty)
+    {
+        if (difficulty > 64)
+            throw std::invalid_argument("difficulty cannot be more than 64");
+
         blockchain_blocks.emplace_back();
     }
 
     void add_block(const Block& block) {
+        if (block.get_version() != protocol_version)
+            throw std::runtime_error("unsupported block version");
+
+        if (block.get_difficulty() != required_difficulty)
+            throw std::runtime_error("incorrect block difficulty");
+
         if (block.get_prev_hash() != get_latest_hash())
             throw std::runtime_error("invalid prev hash");
 
