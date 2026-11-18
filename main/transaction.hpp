@@ -20,7 +20,7 @@ public:
         : sender_id(sender)
         , receiver_id(receiver)
         , amount(validate_amount(transaction_amount))
-        , sequence(sequence_number)
+        , sequence(validate_sequence(sequence_number))
         , transaction_id(get_transaction_id())
     {}
 
@@ -31,6 +31,15 @@ public:
         }
 
         return static_cast<std::uint64_t>(value);
+    }
+
+    static std::uint64_t validate_sequence(std::uint64_t value)
+    {
+        if (value == 0) {
+            throw std::invalid_argument("transaction sequence must be greater than 0");
+        }
+
+        return value;
     }
 
     std::vector<uint8_t> serialize_transaction() const {

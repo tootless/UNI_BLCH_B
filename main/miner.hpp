@@ -37,19 +37,30 @@ public:
 
 	//add valid transaction to pool
 	bool add_transaction(const Transaction& transaction, const Balances& balances,
-		const std::set<Hash>& included_transaction_ids, 
+		const std::set<Hash>& included_transaction_ids,
 		const std::set<std::uint64_t>& included_sequences, std::string& reason)
 	{
-		//check if tx id in blockchain
 		if (included_transaction_ids.find(transaction.get_id()) != included_transaction_ids.end()) {
 			reason = "transaction ID already included in blockchain";
 			return false;
+		}
+
+		for (const Transaction& pooled_tx : transaction_pool) {
+			if (pooled_tx.get_id() == transaction.get_id()) {
+				reason = "duplicate transaction ID in pool";
+				return false;
+			}
 		}
 
 		const std::uint64_t sequence = transaction.get_sequence();
 
 		if (included_sequences.find(sequence) != included_sequences.end()) {
 			reason = "transaction sequence already included in blockchain";
+			return false;
+		}
+
+		if (used_sequences.find(sequence) != used_sequences.end()) {
+			reason = "duplicate transaction sequence in pool";
 			return false;
 		}
 
@@ -61,21 +72,6 @@ public:
 			return false;
 		}
 
-		//transaction ids have to be unique in block
-		for (const Transaction& pooled_tx : transaction_pool) {
-			if (pooled_tx.get_id() == transaction.get_id()) {
-				reason = "duplicate transaction ID in pool";
-				return false;
-			}
-		}
-
-		const std::uint64_t sequence = transaction.get_sequence();
-
-		if (used_sequences.find(sequence) != used_sequences.end()) {
-			reason = "duplicate transaction sequence";
-			return false;
-		}
-
 		used_sequences.insert(sequence);
 		transaction_pool.push_back(transaction);
 
@@ -84,7 +80,7 @@ public:
 
 	//create candidate block and solve its block hash
 	Block solve_puzzle(const std::vector<Transaction>& transactions, const std::array<std::uint32_t, 8>& previous_hash,
-		std::uint64_t difficulty = 3){
+		std::uint64_t difficulty = 3) {
 		Block candidate_block(transactions, previous_hash, difficulty);
 
 		if (difficulty > 64)
@@ -123,9 +119,9 @@ public:
 
 	bool mine_next_block(
 		const Balances& balances, const std::array<std::uint32_t, 8>& previous_hash,
-		const std::set<Hash>& included_transaction_ids, Block& accepted_block, 
-		Balances& proposed_balances, std::vector<size_t>& included_indices, 
-		std::uint64_t difficulty = 3)
+		const std::set<Hash>& included_transaction_ids, const std::set<std::uint64_t>& included_sequences,
+		Block& accepted_block, Balances& proposed_balances, 
+		std::vector<size_t>& included_indices, std::uint64_t difficulty = 3)
 	{
 		pending_transactions.clear();
 		included_indices.clear();
@@ -139,6 +135,7 @@ public:
 
 		Balances temporary_balances = balances;
 		std::set<Hash> candidate_transaction_ids;
+		std::set<std::uint64_t> candidate_sequences;
 
 		for (size_t index : pool_indices) {
 			if (pending_transactions.size() >= transaction_threshold)
@@ -156,6 +153,18 @@ public:
 			if (!candidate_transaction_ids.insert(tx_id).second)
 				continue;
 
+			const std::uint64_t sequence = tx.get_sequence();
+
+			if (included_sequences.find(sequence) != included_sequences.end()) {
+				candidate_transaction_ids.erase(tx_id);
+				continue;
+			}
+
+			if (!candidate_sequences.insert(sequence).second) {
+				candidate_transaction_ids.erase(tx_id);
+				continue;
+			}
+
 			TxValidation validation = apply_transaction(tx, temporary_balances);
 
 			if (validation.valid) {
@@ -164,6 +173,7 @@ public:
 			}
 			else {
 				candidate_transaction_ids.erase(tx_id);
+				candidate_sequences.erase(sequence);
 			}
 		}
 
@@ -187,7 +197,6 @@ public:
 		if (mined_block.calculate_tx_root() != mined_block.get_tx_root())
 			valid_block = false;
 
-		// Verify transactions again using a fresh temporary state.
 		Balances verified_balances = balances;
 
 		if (valid_block) {
@@ -204,7 +213,6 @@ public:
 		if (!valid_block)
 			return false;
 
-		// Return proposed state without modifying real balances or pool.
 		proposed_balances = std::move(verified_balances);
 		accepted_block = std::move(mined_block);
 
@@ -218,8 +226,13 @@ public:
 		std::sort(sorted_indices.begin(), sorted_indices.end(), std::greater<size_t>());
 
 		for (size_t index : sorted_indices) {
-			if (index < transaction_pool.size())
+			if (index < transaction_pool.size()) {
+				const std::uint64_t sequence = transaction_pool[index].get_sequence();
+
+				used_sequences.erase(sequence);
+
 				transaction_pool.erase(transaction_pool.begin() + index);
+			}
 		}
 
 		pending_transactions.clear();

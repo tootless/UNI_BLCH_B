@@ -61,6 +61,9 @@ public:
 
             const Hash& tx_id = tx.get_id();
 
+            if (!tx.is_id_valid())
+                throw std::runtime_error("transaction ID is invalid");
+
             //check if this ID was included in an earlier block
             if (included_transaction_ids.find(tx_id) != included_transaction_ids.end())
                 throw std::runtime_error("transaction ID already included in blockchain");

@@ -31,6 +31,10 @@ inline TxValidation apply_transaction(const Transaction& tx, BalanceState& state
         return { false, "transaction ID is invalid" };
     }
 
+    if (tx.get_sequence() == 0) {
+        return { false, "transaction sequence must be greater than 0" };
+    }
+
     auto sender_it = state.find(sender);
     auto receiver_it = state.find(receiver);
 
