@@ -16,6 +16,7 @@ private:
 
     using Hash = std::array<std::uint32_t, 8>; //transaction id
     std::set<Hash> included_transaction_ids;
+    std::set<std::uint64_t> included_sequences;
 
     std::uint64_t required_difficulty;
 
@@ -52,9 +53,8 @@ public:
             throw std::runtime_error("invalid tx root");
 
         BalanceState temp_balances = balances;
-
-        //transaction ids of candidate block
         std::set<Hash> candidate_transaction_ids;
+        std::set<std::uint64_t> candidate_sequences;
 
         //validate transactions
         for (const Transaction& tx : block.get_transactions()) {
@@ -68,13 +68,23 @@ public:
             if (!candidate_transaction_ids.insert(tx_id).second)
                 throw std::runtime_error("duplicate transaction ID in block");
 
+            const std::uint64_t sequence = tx.get_sequence();
+
+            if (included_sequences.find(sequence) != included_sequences.end()) {
+                throw std::runtime_error("transaction sequence already used in blockchain");
+            }
+
+            if (!candidate_sequences.insert(sequence).second) {
+                throw std::runtime_error("duplicate transaction sequence in block");
+            }
+
             TxValidation validation = apply_transaction(tx, temp_balances);
 
             if (!validation.valid)
                 throw std::runtime_error("invalid transaction: " + validation.reason);
         }
 
-        //prepare updated ids, no commit yet
+        //prepare updated ids and sequences, no commit yet
         auto updated_transaction_ids = included_transaction_ids;
 
         updated_transaction_ids.insert(
@@ -82,12 +92,17 @@ public:
             candidate_transaction_ids.end()
         );
 
+        auto updated_sequences = included_sequences;
+
+        updated_sequences.insert(candidate_sequences.begin(), candidate_sequences.end());
+
         //accept block
         blockchain_blocks.push_back(block);
 
         //commit after approval
         balances.swap(temp_balances);
         included_transaction_ids.swap(updated_transaction_ids);
+        included_sequences.swap(updated_sequences);
     }
 
     std::array<std::uint32_t, 8> get_latest_hash() const {
@@ -105,5 +120,9 @@ public:
 
     const std::set<Hash>& get_included_transaction_ids() const {
         return included_transaction_ids;
+    }
+
+    const std::set<std::uint64_t>& get_included_sequences() const {
+        return included_sequences;
     }
 };

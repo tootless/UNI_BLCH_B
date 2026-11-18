@@ -27,8 +27,7 @@ private:
 
 	std::mt19937 rng{ std::random_device{}() };
 
-	using SequenceKey = std::pair<std::uint32_t, std::uint64_t>;
-	std::set<SequenceKey> used_sequences;
+	std::set<std::uint64_t> used_sequences;
 
 	std::uint64_t last_attempts = 0;
 	double last_mining_seconds = 0.0;
@@ -38,11 +37,19 @@ public:
 
 	//add valid transaction to pool
 	bool add_transaction(const Transaction& transaction, const Balances& balances,
-		const std::set<Hash>& included_transaction_ids, std::string& reason)
+		const std::set<Hash>& included_transaction_ids, 
+		const std::set<std::uint64_t>& included_sequences, std::string& reason)
 	{
 		//check if tx id in blockchain
 		if (included_transaction_ids.find(transaction.get_id()) != included_transaction_ids.end()) {
 			reason = "transaction ID already included in blockchain";
+			return false;
+		}
+
+		const std::uint64_t sequence = transaction.get_sequence();
+
+		if (included_sequences.find(sequence) != included_sequences.end()) {
+			reason = "transaction sequence already included in blockchain";
 			return false;
 		}
 
@@ -62,17 +69,14 @@ public:
 			}
 		}
 
-		SequenceKey key{
-			transaction.get_sender_id(),
-			transaction.get_sequence()
-		};
+		const std::uint64_t sequence = transaction.get_sequence();
 
-		if (used_sequences.find(key) != used_sequences.end()) {
-			reason = "duplicate sequence for sender";
+		if (used_sequences.find(sequence) != used_sequences.end()) {
+			reason = "duplicate transaction sequence";
 			return false;
 		}
 
-		used_sequences.insert(key);
+		used_sequences.insert(sequence);
 		transaction_pool.push_back(transaction);
 
 		return true;
