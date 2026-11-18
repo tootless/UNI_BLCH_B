@@ -4,13 +4,14 @@
 #include <array>
 #include <cstdint>
 #include <vector>
+#include <stdexcept>
 
 struct Transaction
 {
 private:
     std::uint32_t sender_id;
     std::uint32_t receiver_id;
-    std::uint64_t amount;
+    std::int64_t amount;
     std::uint64_t sequence;
     std::array<std::uint32_t, 8> transaction_id;
 
@@ -18,10 +19,19 @@ public:
     Transaction(std::uint32_t sender, std::uint32_t receiver, std::uint64_t transaction_amount, std::uint64_t sequence_number)
         : sender_id(sender)
         , receiver_id(receiver)
-        , amount(transaction_amount)
+        , amount(validate_amount(transaction_amount))
         , sequence(sequence_number)
         , transaction_id(get_transaction_id())
     {}
+
+    static std::uint64_t validate_amount(std::int64_t value)
+    {
+        if (value <= 0) {
+            throw std::invalid_argument("transaction amount must be positive");
+        }
+
+        return static_cast<std::uint64_t>(value);
+    }
 
     std::vector<uint8_t> serialize_transaction() const {
         std::vector<std::uint8_t> bytes;
