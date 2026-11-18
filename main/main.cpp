@@ -8,6 +8,135 @@
 #include <vector>
 #include <iomanip>
 
+using Hash = std::array<uint32_t, 8>;
+
+
+bool test_candidate_winner_selection()
+{
+	std::cout << "\ntest of candidate winner\n";
+
+	std::vector<MiningCandidate> candidates(5);
+
+	candidates[0].solved = true;
+	candidates[0].attempts = 8500;
+
+	//this one should win
+	candidates[1].solved = true;
+	candidates[1].attempts = 3200;
+
+	candidates[2].solved = false;
+	candidates[2].attempts = 10000;
+
+	candidates[3].solved = true;
+	candidates[3].attempts = 5100;
+
+	candidates[4].solved = true;
+	candidates[4].attempts = 7400;
+
+	Miner miner;
+
+	size_t winner = miner.select_winner(candidates);
+
+	const bool correct_winner = winner == 1;
+
+	std::cout << "selected candidate: " << winner + 1 << "\nexpected candidate: 2\n";
+	std::cout << "winner selection: " << (correct_winner ? "pass" : "fail") << "\n";
+
+	return correct_winner;
+}
+
+
+//different number of transactions
+bool test_merkle1()
+{
+	std::cout << "\nmerkle tree test 1\n";
+
+	std::vector<Transaction> transactions;
+
+	transactions.emplace_back(1, 2, 10, 1);
+	transactions.emplace_back(1, 3, 20, 2);
+	transactions.emplace_back(2, 3, 30, 3);
+	transactions.emplace_back(3, 1, 40, 4);
+	transactions.emplace_back(2, 1, 50, 5);
+
+	const std::vector<size_t> test_sizes = { 1, 2, 3, 5 };
+
+	bool all_passed = true;
+
+	for (size_t count : test_sizes) {
+		std::vector<Hash> transaction_ids;
+
+		for (size_t i = 0; i < count; ++i) {
+			transaction_ids.push_back(transactions[i].get_id());
+		}
+
+		MerkleTree tree(transaction_ids);
+
+		const Hash first_root = tree.get_root();
+
+		MerkleTree second_tree(transaction_ids);
+
+		const Hash second_root = second_tree.get_root();
+
+		const bool root_not_empty = first_root != Hash{};
+		const bool roots_match = first_root == second_root;
+
+		const bool passed = root_not_empty && roots_match;
+
+		std::cout << count << " transactions: "
+			<< (passed ? "pass" : "fail") << "\n";
+
+		if (!root_not_empty) {
+			std::cout << "merkle root empty\n";
+		}
+
+		if (!roots_match) {
+			std::cout << "root is wrong, not matching\n";
+		}
+
+		all_passed = all_passed && passed;
+	}
+
+	return all_passed;
+}
+
+//root avalanche test
+bool test_merkle2()
+{
+	std::cout << "\nmerkle test 2\n";
+
+	Transaction tx1(1, 2, 100, 1);
+	Transaction tx2(1, 2, 200, 1);
+
+	std::vector<Hash> original_id = {tx1.get_id()};
+
+	std::vector<Hash> changed_id = {tx2.get_id()};
+
+	MerkleTree original_tree(original_id);
+	MerkleTree changed_tree(changed_id);
+
+	const Hash original_root = original_tree.get_root();
+	const Hash changed_root = changed_tree.get_root();
+
+	std::cout << "original root: "<< to_hex(original_root) << "\n";
+
+	std::cout << "changed root:  "<< to_hex(changed_root) << "\n";
+
+	const bool id_changed = tx1.get_id() != tx2.get_id();
+	const bool root_changed = original_tree.get_root() != changed_tree.get_root();
+
+	const bool passed = id_changed && root_changed;
+
+	std::cout << "transaction ID changed: "
+		<< (id_changed ? "pass" : "fail") << "\n";
+
+	std::cout << "merkle root changed: "
+		<< (root_changed ? "pass" : "fail") << "\n";
+
+	return passed;
+}
+
+
 void print_balances(const BalanceState& balances)
 {
 	std::cout << "\nbalances:\n";
@@ -209,7 +338,11 @@ bool test2()
 int main()
 {
 
-	bool test_1 = test1();
+	bool winner_test_passed = test_candidate_winner_selection();
+
+	//bool merkle_tests_passed = test_merkle1() && test_merkle2();
+
+	/*bool test_1 = test1();
 
 	bool test_2 = test2();
 
@@ -226,6 +359,6 @@ int main()
 		return 0;
 	}
 
-	std::cout << "\nsomething failed\n";
+	std::cout << "\nsomething failed\n";*/
 	return 1;
 }

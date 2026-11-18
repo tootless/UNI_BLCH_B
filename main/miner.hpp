@@ -15,6 +15,21 @@
 #include <functional>
 #include <chrono>
 
+
+struct MiningCandidate
+{
+	Block block;
+
+	std::vector<size_t> included_indices;
+	std::uint64_t next_nonce = 0;
+	std::uint64_t attempts = 0;
+	double mining_seconds = 0.0;
+
+	bool solved = false;
+	bool exhausted = false; //no more candidate transactions
+};
+
+
 struct Miner
 {
 private:
@@ -78,6 +93,92 @@ public:
 		return true;
 	}
 
+
+	std::vector<MiningCandidate> create_five_candidates(const Balances& balances,
+		const std::array<std::uint32_t, 8>& previous_hash, const std::set<Hash>& included_transaction_ids,
+		const std::set<std::uint64_t>& included_sequences, std::uint64_t difficulty = 3)
+	{
+		if (difficulty > 64)
+			throw std::runtime_error("difficulty bigger than 256bit hash");
+
+		std::vector<MiningCandidate> candidates;
+		candidates.reserve(5);
+
+		for (size_t candidate_number = 0; candidate_number < 5; ++candidate_number)
+		{
+			std::vector<size_t> pool_indices(transaction_pool.size());
+
+			for (size_t i = 0; i < pool_indices.size(); ++i) pool_indices[i] = i;
+
+			std::shuffle(pool_indices.begin(), pool_indices.end(), rng);
+
+			//candidates don't interfere with one another
+			Balances temporary_balances = balances;
+
+			std::set<Hash> candidate_transaction_ids;
+			std::set<std::uint64_t> candidate_sequences;
+
+			std::vector<Transaction> candidate_transactions;
+			std::vector<size_t> candidate_indices;
+
+			for (size_t index : pool_indices)
+			{
+				if (candidate_transactions.size() >= transaction_threshold)
+					break;
+
+				const Transaction& tx = transaction_pool[index];
+				const Hash& tx_id = tx.get_id();
+
+				if (!tx.is_id_valid())
+					continue;
+
+				if (included_transaction_ids.find(tx_id) != included_transaction_ids.end())
+					continue;
+
+				if (!candidate_transaction_ids.insert(tx_id).second)
+					continue;
+
+				const std::uint64_t sequence = tx.get_sequence();
+
+				if (included_sequences.find(sequence) != included_sequences.end())
+				{
+					candidate_transaction_ids.erase(tx_id);
+					continue;
+				}
+
+				if (!candidate_sequences.insert(sequence).second)
+				{
+					candidate_transaction_ids.erase(tx_id);
+					continue;
+				}
+
+				TxValidation validation = apply_transaction(tx, temporary_balances);
+
+				if (validation.valid)
+				{
+					candidate_transactions.push_back(tx);
+					candidate_indices.push_back(index);
+				}
+				else
+				{
+					candidate_transaction_ids.erase(tx_id);
+					candidate_sequences.erase(sequence);
+				}
+			}
+
+			MiningCandidate candidate;
+
+			candidate.block = Block(std::move(candidate_transactions), previous_hash, difficulty);
+
+			candidate.included_indices = std::move(candidate_indices);
+
+			candidates.push_back(std::move(candidate));
+		}
+
+		return candidates;
+	}
+
+
 	//create candidate block and solve its block hash
 	Block solve_puzzle(const std::vector<Transaction>& transactions, const std::array<std::uint32_t, 8>& previous_hash,
 		std::uint64_t difficulty = 3) {
@@ -120,7 +221,7 @@ public:
 	bool mine_next_block(
 		const Balances& balances, const std::array<std::uint32_t, 8>& previous_hash,
 		const std::set<Hash>& included_transaction_ids, const std::set<std::uint64_t>& included_sequences,
-		Block& accepted_block, Balances& proposed_balances, 
+		Block& accepted_block, Balances& proposed_balances,
 		std::vector<size_t>& included_indices, std::uint64_t difficulty = 3)
 	{
 		pending_transactions.clear();
@@ -237,6 +338,93 @@ public:
 
 		pending_transactions.clear();
 	}
+
+
+	bool mine_candidate_batch(MiningCandidate& candidate, std::uint64_t attempts_size){
+		if (candidate.solved)
+			return true;
+
+		if (candidate.exhausted || attempts_size == 0)
+			return false;
+
+		const auto start = std::chrono::steady_clock::now();
+
+		for (std::uint64_t i = 0; i < attempts_size; ++i)
+		{
+			candidate.block.set_nonce(candidate.next_nonce);
+
+			++candidate.attempts;
+
+			if (candidate.block.is_valid_pow())
+			{
+				candidate.solved = true;
+				break;
+			}
+
+			if (candidate.next_nonce == std::numeric_limits<std::uint64_t>::max())
+			{
+				candidate.exhausted = true;
+				break;
+			}
+
+			++candidate.next_nonce;
+		}
+
+		const auto end = std::chrono::steady_clock::now();
+
+		candidate.mining_seconds +=
+			std::chrono::duration<double>(end - start).count();
+
+		return candidate.solved;
+	}
+
+
+	void mine_candidates_round(std::vector<MiningCandidate>& candidates,std::uint64_t attempts_size){
+		for (MiningCandidate& candidate : candidates)
+		{
+			if (candidate.solved || candidate.exhausted)
+				continue;
+
+			mine_candidate_batch(candidate, attempts_size);
+		}
+	}
+
+
+	//laimetojas naudojo maziausiai bandymu arba ju std::array yra mazesnis uz jam lygius
+	size_t select_winner(const std::vector<MiningCandidate>& candidates)
+	{
+		size_t winner_index = std::numeric_limits<size_t>::max();
+
+		for (size_t i = 0; i < candidates.size(); ++i)
+		{
+			const MiningCandidate& candidate = candidates[i];
+
+			if (!candidate.solved)
+				continue;
+
+			if (winner_index == std::numeric_limits<size_t>::max())
+			{
+				winner_index = i;
+				continue;
+			}
+
+			const MiningCandidate& current_winner = candidates[winner_index];
+
+			//first check which has min attempts
+			if (candidate.attempts < current_winner.attempts)
+			{
+				winner_index = i;
+			}
+			//if equal, check std::array, the smaller one is the winner
+			else if (candidate.attempts == current_winner.attempts && candidate.block.get_hash() < current_winner.block.get_hash())
+			{
+				winner_index = i;
+			}
+		}
+
+		return winner_index;
+	}
+
 
 
 	//get remaining transaction pool
