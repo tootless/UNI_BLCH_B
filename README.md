@@ -1,4 +1,4 @@
-# DIY Blockchain — v0.1
+# DIY Blockchain — v0.2
 
 ## 1. Reikalavimai
 

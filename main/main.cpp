@@ -7,7 +7,7 @@
 #include <vector>
 #include <iomanip>
 
-constexpr int32_t seed = 1351;
+constexpr int32_t seed = 3719;
 using Hash = std::array<uint32_t, 8>;
 
 inline std::vector<Transaction> generate_transactions_valid(const std::vector<User>& users,std::mt19937& rng, std::size_t count = 10000)
@@ -41,7 +41,7 @@ inline std::vector<Transaction> generate_transactions_valid(const std::vector<Us
 	return transactions;
 }
 
-bool test_five_candidates()
+bool test_five_candidates(std::mt19937& rng)
 {
 	std::cout << "\n5 candidate test\n";
 
@@ -173,7 +173,7 @@ bool test_five_candidates()
 }
 
 //tests only the winner selection of batch mining
-bool test_candidate_winner_selection()
+bool test_candidate_winner_selection(std::mt19937& rng)
 {
 	std::cout << "\ntest of candidate winner\n";
 
@@ -209,7 +209,7 @@ bool test_candidate_winner_selection()
 }
 
 //different number of transactions
-bool test_merkle1()
+bool test_merkle1(std::mt19937& rng)
 {
 	std::cout << "\nmerkle tree test 1\n";
 
@@ -245,8 +245,7 @@ bool test_merkle1()
 
 		const bool passed = root_not_empty && roots_match;
 
-		std::cout << count << " transactions: "
-			<< (passed ? "pass" : "fail") << "\n";
+		std::cout << count << " transactions: " << (passed ? "pass" : "fail") << "\n";
 
 		if (!root_not_empty) {
 			std::cout << "merkle root empty\n";
@@ -263,7 +262,7 @@ bool test_merkle1()
 }
 
 //root avalanche test
-bool test_merkle2()
+bool test_merkle2(std::mt19937& rng)
 {
 	std::cout << "\nmerkle test 2\n";
 
@@ -289,15 +288,12 @@ bool test_merkle2()
 
 	const bool passed = id_changed && root_changed;
 
-	std::cout << "transaction ID changed: "
-		<< (id_changed ? "pass" : "fail") << "\n";
+	std::cout << "transaction ID changed: " << (id_changed ? "pass" : "fail") << "\n";
 
-	std::cout << "merkle root changed: "
-		<< (root_changed ? "pass" : "fail") << "\n";
+	std::cout << "merkle root changed: " << (root_changed ? "pass" : "fail") << "\n";
 
 	return passed;
 }
-
 
 void print_balances(const BalanceState& balances)
 {
@@ -320,7 +316,7 @@ void print_transaction_result(const std::string& name, bool accepted, const std:
 }
 
 //testing block rejection
-bool test1()
+bool test1(std::mt19937& rng)
 {
 	std::cout << "test 1\n";
 
@@ -388,7 +384,7 @@ bool test1()
 }
 
 //testing tx pool and mining
-bool test2()
+bool test2(std::mt19937& rng)
 {
 	std::cout << "test 2\n";
 
@@ -499,29 +495,29 @@ bool test2()
 
 int main()
 {
-	bool candidates_test_passed = test_five_candidates();
+	std::mt19937 rng{ static_cast<std::mt19937::result_type>(seed) };
 
-	//bool winner_test_passed = test_candidate_winner_selection();
+	bool candidates_test_passed = test_five_candidates(rng);
+	system("pause");
+	system("cls");
 
-	//bool merkle_tests_passed = test_merkle1() && test_merkle2();
+	bool merkle_tests_passed = test_merkle1(rng) && test_merkle2(rng);
 
-	/*bool test_1 = test1();
+	system("pause");
+	system("cls");
 
-	bool test_2 = test2();
+	//block rejection test
+	bool test_1 = test1(rng);
 
-	std::cout << "results\n";
+	std::cout << "block rejection: " << (test_1 ? "pass" : "fail") << '\n';
 
-	std::cout << "block rejection: "
-		<< (test_1 ? "pass" : "fail") << '\n';
+	system("pause");
+	system("cls");
 
-	std::cout << "Transaction pool and mining: "
-		<< (test_2 ? "pass" : "fail") << '\n';
+	//mining and tx pool
+	bool test_2 = test2(rng);
 
-	if (test_1 && test_2) {
-		std::cout << "\neverything passed yippee\n";
-		return 0;
-	}
+	std::cout << "transaction pool and mining: " << (test_2 ? "pass" : "fail") << '\n';
 
-	std::cout << "\nsomething failed\n";*/
 	return 1;
 }
