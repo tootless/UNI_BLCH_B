@@ -1,523 +1,409 @@
-#include "blockchain.hpp"
+﻿#include "blockchain.hpp"
 #include "miner.hpp"
-#include "user.hpp"
 #include "transaction.hpp"
-#include <iostream>
-#include <string>
-#include <vector>
+#include "transaction_validate.hpp"
+#include "user.hpp"
+#include <atomic>
+#include <chrono>
 #include <iomanip>
+#include <iostream>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <vector>
+#include <random>
 
-constexpr int32_t seed = 3719;
-using Hash = std::array<uint32_t, 8>;
-
-inline std::vector<Transaction> generate_transactions_valid(const std::vector<User>& users,std::mt19937& rng, std::size_t count = 10000)
+inline std::vector<Transaction> generate_transactions_valid(
+    const std::vector<User>& users,
+    std::mt19937& rng,
+    std::size_t count = 10000)
 {
-	std::vector<Transaction> transactions;
-	transactions.reserve(count);
+    std::vector<Transaction> transactions;
+    transactions.reserve(count);
 
-	std::uniform_int_distribution<std::size_t> user_dist(0, users.size() - 1);
-	std::uniform_int_distribution<std::uint64_t> amount_dist(1, 10000);
+    std::uniform_int_distribution<std::size_t> user_dist(0, users.size() - 1);
+    std::uniform_int_distribution<std::uint64_t> amount_dist(1, 10000);
 
-	// sequence per sender, starting at 1
-	std::unordered_map<std::uint32_t, std::uint64_t> sequences;
-	for (const User& u : users) {
-		sequences[u.get_id()] = 1;
-	}
+    std::unordered_map<std::uint32_t, std::uint64_t> sequences;
+    for (const User& u : users)
+        sequences[u.get_id()] = 1;
 
-	for (std::size_t i = 0; i < count; ++i) {
-		std::size_t si = user_dist(rng);
-		std::size_t ri = user_dist(rng);
-		while (si == ri) ri = user_dist(rng);
+    for (std::size_t i = 0; i < count; ++i) {
+        std::size_t si = user_dist(rng);
+        std::size_t ri = user_dist(rng);
+        while (si == ri) ri = user_dist(rng);
 
-		const User& sender = users[si];
-		const User& receiver = users[ri];
+        const User& sender = users[si];
+        const User& receiver = users[ri];
 
-		std::uint64_t amount = amount_dist(rng);
-		std::uint64_t sequence = sequences.at(sender.get_id())++;
+        std::uint64_t amount = amount_dist(rng);
+        std::uint64_t sequence = sequences.at(sender.get_id())++;
 
-		transactions.emplace_back(sender.get_id(), receiver.get_id(), amount, sequence);
-	}
+        transactions.emplace_back(
+            sender.get_id(), receiver.get_id(), amount, sequence);
+    }
 
-	return transactions;
+    return transactions;
 }
 
-bool test_five_candidates(std::mt19937& rng)
+// Vienos gijos kasimo funkcija – naudojama ir nuosekliai, ir lygiagreciai.
+// found = bendras atomic sustabdymo signalas; nullptr reiškia "nera signalo"
+// (nuoseklusis kelias).
+static void mine_worker(
+    MiningCandidate& candidate,
+    std::uint64_t batch_size,
+    std::atomic<bool>* found)   // nullptr → nuoseklusis kelias, be sustabdymo
 {
-	std::cout << "\n5 candidate test\n";
+    if (candidate.solved || candidate.exhausted)
+        return;
 
-	constexpr std::uint64_t difficulty = 3;
-	constexpr std::uint64_t initial_budget = 10000;
-	constexpr std::uint64_t budget_add_amount = 20000;
-	constexpr std::uint64_t attempt_limit = 500000;
-	constexpr std::size_t user_count = 10;
-	constexpr std::size_t tx_count = 50;
+    const auto start = std::chrono::steady_clock::now();
 
-	std::mt19937 rng{ std::random_device{}() };
+    for (std::uint64_t i = 0; i < batch_size; ++i) {
+        // Tikrina sustabdymo signala tik lygiagreciame kelyje
+        if (found && found->load(std::memory_order_relaxed))
+            break;
 
-	const std::vector<User> users = generate_users(rng, user_count);
+        candidate.block.set_nonce(candidate.next_nonce);
+        ++candidate.attempts;
 
-	BalanceState balances;
-	for (const User& u : users)
-		balances[u.get_id()] = u.get_balance();
+        if (candidate.block.is_valid_pow()) {
+            candidate.solved = true;
+            if (found) {
+                bool expected = false;
+                found->compare_exchange_strong(
+                    expected, true,
+                    std::memory_order_release,
+                    std::memory_order_relaxed);
+            }
+            break;
+        }
 
-	std::cout << "user amount: " << users.size() << "\n";
+        if (candidate.next_nonce == std::numeric_limits<std::uint64_t>::max()) {
+            candidate.exhausted = true;
+            break;
+        }
 
-	Blockchain blockchain(difficulty);
-	Miner miner;
+        ++candidate.next_nonce;
+    }
 
-	const std::vector<Transaction> all_txs = generate_transactions_valid(users, rng, tx_count);
-
-	int added = 0;
-	for (const Transaction& tx : all_txs) {
-		std::string reason;
-		if (miner.add_transaction(tx, balances, blockchain.get_included_transaction_ids(), blockchain.get_included_sequences(), reason)) {
-			++added;
-		}
-	}
-
-	std::cout << "tx in pool: " << added << " from " << tx_count << "\n";
-
-	if (added == 0) {
-		std::cout << "pool empty\n";
-		return false;
-	}
-
-	std::vector<MiningCandidate> candidates = miner.create_five_candidates(
-		balances,
-		blockchain.get_latest_hash(),
-		blockchain.get_included_transaction_ids(),
-		blockchain.get_included_sequences(),
-		difficulty
-	);
-
-	std::cout << "created " << candidates.size() << " candidates:\n";
-	for (std::size_t i = 0; i < candidates.size(); ++i)
-		std::cout << " candidate num. " << i + 1 << ". transaction amount: " << candidates[i].block.get_transactions().size() << "\n";
-
-	std::cout << "\ninitial budget: " << initial_budget << " nonces\n";
-	miner.mine_candidates_round(candidates, initial_budget);
-
-	std::uint64_t round = 1;
-
-	auto total_attempts = [&]() {
-		std::uint64_t sum = 0;
-		for (const MiningCandidate& c : candidates) {
-			sum += c.attempts;
-		}
-		return sum;
-		};
-
-	while (true) {
-		const std::size_t winner_index = miner.select_winner(candidates);
-
-		if (winner_index != std::numeric_limits<std::size_t>::max()) {
-			std::cout << "solved after " << round << " rounds, total attempts: " << total_attempts() << "\n";
-			break;
-		}
-
-		if (total_attempts() >= attempt_limit) {
-			std::cout << "attempt limit reached (" << attempt_limit << ")\n";
-			return false;
-		}
-
-		const std::uint64_t remaining = attempt_limit - total_attempts();
-		const std::uint64_t next_budget = std::min(budget_add_amount, remaining / 5);
-
-		if (next_budget == 0) {
-			std::cout << "no more budget\n";
-			return false;
-		}
-
-		++round;
-		std::cout << "  round: " << round
-			<< ", extra budget: " << next_budget << "\n";
-
-		miner.mine_candidates_round(candidates, next_budget);
-	}
-
-	const std::size_t winner_index = miner.select_winner(candidates);
-	const MiningCandidate& winner = candidates[winner_index];
-
-	std::cout << "\ncandidate results\n";
-	for (std::size_t i = 0; i < candidates.size(); ++i) {
-		const MiningCandidate& c = candidates[i];
-		std::cout << " candidate " << i + 1 << ", attempts: " << c.attempts << ", tx amount: " << c.block.get_transactions().size()
-			<< ", " << (c.solved ? "solved" : "not solved") << (i == winner_index ? " is a winner" : "") << "\n";
-	}
-
-	std::cout << "\nwinner index: " << winner_index + 1
-		<< " (" << winner.attempts << " attempts, " << winner.block.get_transactions().size() << " transactions)\n";
-
-	//revalidation
-	std::cout << "\nwinner block validation\n";
-	BalanceState balances_copy = balances;
-
-	bool block_accepted = false;
-	try {
-		blockchain.add_block(winner.block, balances_copy);
-		block_accepted = true;
-		std::cout << "block accepted\n";
-	}
-	catch (const std::exception& e) {
-		std::cout << "block not accepted " << e.what() << "\n";
-	}
-
-	if (!block_accepted) return false;
-
-	miner.commit_mined_transactions(winner.included_indices);
-
-	std::cout << "left in transaction pool: " << miner.get_transaction_pool().size() << "\n";
-	std::cout << "blockchain size: " << blockchain.get_size() << "\n";
-
-	return true;
+    const auto end = std::chrono::steady_clock::now();
+    candidate.mining_seconds +=
+        std::chrono::duration<double>(end - start).count();
 }
 
-//tests only the winner selection of batch mining
-bool test_candidate_winner_selection(std::mt19937& rng)
+// Lygiagretus raundas: kiekvienas kandidatas – atskira gija.
+// Grazina tikra praejusi laika (sienos laikas, ne suma).
+static double mine_candidates_round_parallel(
+    std::vector<MiningCandidate>& candidates,
+    std::uint64_t batch_size)
 {
-	std::cout << "\ntest of candidate winner\n";
+    std::atomic<bool> found{ false };
 
-	std::vector<MiningCandidate> candidates(5);
+    // Inicijuojame found, jei kas nors jau išsprendė
+    for (const MiningCandidate& c : candidates)
+        if (c.solved) { found.store(true); break; }
 
-	candidates[0].solved = true;
-	candidates[0].attempts = 8500;
+    const auto wall_start = std::chrono::steady_clock::now();
 
-	//this one should win
-	candidates[1].solved = true;
-	candidates[1].attempts = 3200;
+    std::vector<std::thread> threads;
+    threads.reserve(candidates.size());
 
-	candidates[2].solved = false;
-	candidates[2].attempts = 3200;
+    for (MiningCandidate& c : candidates)
+        threads.emplace_back(mine_worker, std::ref(c), batch_size, &found);
 
-	candidates[3].solved = true;
-	candidates[3].attempts = 5100;
+    for (std::thread& t : threads)
+        t.join();
 
-	candidates[4].solved = true;
-	candidates[4].attempts = 7400;
-
-	Miner miner;
-
-	size_t winner = miner.select_winner(candidates);
-
-	const bool correct_winner = winner == 1;
-
-	std::cout << "selected candidate: " << winner + 1;
-	std::cout << "\nexpected candidate: 2 or 3\n";
-	std::cout << "winner selection: " << (correct_winner ? "pass" : "fail") << "\n";
-
-	return correct_winner;
+    const auto wall_end = std::chrono::steady_clock::now();
+    return std::chrono::duration<double>(wall_end - wall_start).count();
 }
 
-//different number of transactions
-bool test_merkle1(std::mt19937& rng)
+// ---------------------------------------------------------------------------
+// Bendras kasimo ciklas – naudojamas abiem variantams
+// Gražina sienos laiką (wall time).
+// ---------------------------------------------------------------------------
+struct RaceResult {
+    bool         found = false;
+    std::size_t  winner_idx = std::numeric_limits<std::size_t>::max();
+    std::uint64_t total_attempts = 0;
+    double       wall_seconds = 0.0;   // realus laikas (ne suma per gijas)
+    std::uint64_t rounds = 0;
+};
+
+static RaceResult run_race(
+    std::vector<MiningCandidate>& candidates,
+    Miner& miner,
+    bool parallel,
+    std::uint64_t initial_budget = 10'000,
+    std::uint64_t budget_step = 20'000,
+    std::uint64_t attempt_limit = 500'000)
 {
-	std::cout << "\nmerkle tree test 1\n";
+    RaceResult res;
 
-	std::vector<Transaction> transactions;
+    auto count_attempts = [&]() {
+        std::uint64_t s = 0;
+        for (const MiningCandidate& c : candidates) s += c.attempts;
+        return s;
+        };
 
-	transactions.emplace_back(1, 2, 10, 1);
-	transactions.emplace_back(1, 3, 20, 2);
-	transactions.emplace_back(2, 3, 30, 3);
-	transactions.emplace_back(3, 1, 40, 4);
-	transactions.emplace_back(2, 1, 50, 5);
+    // Pradinis raundas
+    ++res.rounds;
+    if (parallel)
+        res.wall_seconds += mine_candidates_round_parallel(candidates, initial_budget);
+    else {
+        const auto t0 = std::chrono::steady_clock::now();
+        miner.mine_candidates_round(candidates, initial_budget);
+        res.wall_seconds +=
+            std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - t0).count();
+    }
 
-	const std::vector<size_t> test_sizes = { 1, 2, 3, 5 };
+    while (true) {
+        res.total_attempts = count_attempts();
+        res.winner_idx = miner.select_winner(candidates);
 
-	bool all_passed = true;
+        if (res.winner_idx != std::numeric_limits<std::size_t>::max()) {
+            res.found = true;
+            break;
+        }
 
-	for (size_t count : test_sizes) {
-		std::vector<Hash> transaction_ids;
+        if (res.total_attempts >= attempt_limit)
+            break;
 
-		for (size_t i = 0; i < count; ++i) {
-			transaction_ids.push_back(transactions[i].get_id());
-		}
+        const std::uint64_t remaining = attempt_limit - res.total_attempts;
+        const std::uint64_t next_budget =
+            std::min(budget_step, remaining / static_cast<std::uint64_t>(candidates.size()));
 
-		MerkleTree tree(transaction_ids);
+        if (next_budget == 0)
+            break;
 
-		const Hash first_root = tree.get_root();
+        ++res.rounds;
+        if (parallel)
+            res.wall_seconds +=
+            mine_candidates_round_parallel(candidates, next_budget);
+        else {
+            const auto t0 = std::chrono::steady_clock::now();
+            miner.mine_candidates_round(candidates, next_budget);
+            res.wall_seconds +=
+                std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - t0).count();
+        }
+    }
 
-		MerkleTree second_tree(transaction_ids);
-
-		const Hash second_root = second_tree.get_root();
-
-		const bool root_not_empty = first_root != Hash{};
-		const bool roots_match = first_root == second_root;
-
-		const bool passed = root_not_empty && roots_match;
-
-		std::cout << count << " transactions: " << (passed ? "pass" : "fail") << "\n";
-
-		if (!root_not_empty) {
-			std::cout << "merkle root empty\n";
-		}
-
-		if (!roots_match) {
-			std::cout << "root is wrong, not matching\n";
-		}
-
-		all_passed = all_passed && passed;
-	}
-
-	return all_passed;
+    res.total_attempts = count_attempts();
+    return res;
 }
 
-//root avalanche test
-bool test_merkle2(std::mt19937& rng)
+// ---------------------------------------------------------------------------
+// Pagalbine: sukuria vienoda aplinka (naudotojai + pool)
+// ---------------------------------------------------------------------------
+struct TestEnv {
+    std::vector<User>    users;
+    BalanceState         balances;
+    Blockchain           blockchain;
+    Miner                miner;
+    int                  pool_size = 0;
+
+    TestEnv(std::uint64_t difficulty,
+        std::size_t   user_count,
+        std::size_t   tx_count,
+        std::mt19937& rng)
+        : blockchain(difficulty)
+    {
+        users = generate_users(rng, user_count);
+        for (const User& u : users)
+            balances[u.get_id()] = u.get_balance();
+
+        const auto all_txs =
+            generate_transactions_valid(users, rng, tx_count);
+
+        for (const Transaction& tx : all_txs) {
+            std::string reason;
+            if (miner.add_transaction(tx, balances,
+                blockchain.get_included_transaction_ids(),
+                blockchain.get_included_sequences(),
+                reason))
+                ++pool_size;
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Pagrindiniai testai
+// ---------------------------------------------------------------------------
+
+// Testas 1: nuoseklus kasimas (esamas elgesys)
+bool test_sequential(std::uint64_t difficulty,
+    std::size_t   user_count,
+    std::size_t   tx_count)
 {
-	std::cout << "\nmerkle test 2\n";
+    std::cout << "\n--- Nuoseklus kasimas ---\n";
 
-	Transaction tx1(1, 2, 100, 1);
-	Transaction tx2(1, 2, 200, 1);
+    std::mt19937 rng{ 3719 };
+    TestEnv env(difficulty, user_count, tx_count, rng);
 
-	std::vector<Hash> original_id = { tx1.get_id() };
+    std::cout << "Pool: " << env.pool_size << " tx\n";
+    if (env.pool_size == 0) { std::cout << "PRALEISTA (pool tuščias)\n"; return false; }
 
-	std::vector<Hash> changed_id = { tx2.get_id() };
+    auto candidates = env.miner.create_five_candidates(
+        env.balances,
+        env.blockchain.get_latest_hash(),
+        env.blockchain.get_included_transaction_ids(),
+        env.blockchain.get_included_sequences(),
+        difficulty);
 
-	MerkleTree original_tree(original_id);
-	MerkleTree changed_tree(changed_id);
+    RaceResult res = run_race(candidates, env.miner, /*parallel=*/false);
 
-	const Hash original_root = original_tree.get_root();
-	const Hash changed_root = changed_tree.get_root();
+    std::cout << std::fixed << std::setprecision(6);
+    std::cout << "Rastas: " << (res.found ? "taip" : "ne") << "\n";
+    std::cout << "Bandymai: " << res.total_attempts << "\n";
+    std::cout << "Raundai:  " << res.rounds << "\n";
+    std::cout << "Laikas:   " << res.wall_seconds << " s\n";
 
-	std::cout << "original root: " << to_hex(original_root) << "\n";
+    if (!res.found) return false;
 
-	std::cout << "changed root:  " << to_hex(changed_root) << "\n";
+    const MiningCandidate& winner = candidates[res.winner_idx];
+    BalanceState balances_copy = env.balances;
 
-	const bool id_changed = tx1.get_id() != tx2.get_id();
-	const bool root_changed = original_tree.get_root() != changed_tree.get_root();
+    try {
+        env.blockchain.add_block(winner.block, balances_copy);
+    }
+    catch (const std::exception& e) {
+        std::cout << "Blokas atmestas: " << e.what() << "\n";
+        return false;
+    }
 
-	const bool passed = id_changed && root_changed;
-
-	std::cout << "transaction ID changed: " << (id_changed ? "pass" : "fail") << "\n";
-
-	std::cout << "merkle root changed: " << (root_changed ? "pass" : "fail") << "\n";
-
-	return passed;
+    env.miner.commit_mined_transactions(winner.included_indices);
+    std::cout << "Blokas priimtas. Pool liko: "
+        << env.miner.get_transaction_pool().size() << "\n";
+    return true;
 }
 
-void print_balances(const BalanceState& balances)
+// Testas 2: lygiagretus kasimas
+bool test_parallel(std::uint64_t difficulty,
+    std::size_t   user_count,
+    std::size_t   tx_count)
 {
-	std::cout << "\nbalances:\n";
+    std::cout << "\n--- Lygiagretus kasimas ---\n";
 
-	for (const auto& user : balances) {
-		std::cout << "user " << user.first
-			<< ": " << user.second << '\n';
-	}
+    std::mt19937 rng{ 3719 };
+    TestEnv env(difficulty, user_count, tx_count, rng);
+
+    std::cout << "Pool: " << env.pool_size << " tx\n";
+    if (env.pool_size == 0) { std::cout << "PRALEISTA (pool tuščias)\n"; return false; }
+
+    auto candidates = env.miner.create_five_candidates(
+        env.balances,
+        env.blockchain.get_latest_hash(),
+        env.blockchain.get_included_transaction_ids(),
+        env.blockchain.get_included_sequences(),
+        difficulty);
+
+    RaceResult res = run_race(candidates, env.miner, /*parallel=*/true);
+
+    std::cout << std::fixed << std::setprecision(6);
+    std::cout << "Rastas: " << (res.found ? "taip" : "ne") << "\n";
+    std::cout << "Bandymai: " << res.total_attempts << "\n";
+    std::cout << "Raundai:  " << res.rounds << "\n";
+    std::cout << "Laikas:   " << res.wall_seconds << " s  (sienos laikas)\n";
+
+    // Patikrinti: nelaimejusių kandidatu attempts nekeicia balansų
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        if (i == res.winner_idx) continue;
+        // Jei kandidatas solved bet nera laimėtojas – jo blokas nepateks į grandine, balansai nepakis.
+        if (candidates[i].solved)
+            std::cout << "  kandidatas " << i + 1
+            << " taip pat išsprendė, bet nebus naudojamas\n";
+    }
+
+    if (!res.found) return false;
+
+    const MiningCandidate& winner = candidates[res.winner_idx];
+    BalanceState balances_copy = env.balances;
+
+    try {
+        env.blockchain.add_block(winner.block, balances_copy);
+    }
+    catch (const std::exception& e) {
+        std::cout << "Blokas atmestas: " << e.what() << "\n";
+        return false;
+    }
+
+    env.miner.commit_mined_transactions(winner.included_indices);
+    std::cout << "Blokas priimtas. Pool liko: "
+        << env.miner.get_transaction_pool().size() << "\n";
+    return true;
 }
 
-void print_transaction_result(const std::string& name, bool accepted, const std::string& reason = "") {
-	std::cout << name << ": "
-		<< (accepted ? "accepted" : "rejected");
-
-	if (!accepted && !reason.empty())
-		std::cout << " - " << reason;
-
-	std::cout << '\n';
-}
-
-//testing block rejection
-bool test1(std::mt19937& rng)
+// Testas 3: palyginimas vienodomis sąlygomis (tas pats seed, tie patys kandidatai)
+void test_comparison(std::uint64_t difficulty,
+    std::size_t   user_count,
+    std::size_t   tx_count)
 {
-	std::cout << "test 1\n";
+    std::cout << "\n=== Palyginimas: nuoseklus vs lygiagretus ===\n";
+    std::cout << "Difficulty: " << difficulty
+        << ", naudotojai: " << user_count
+        << ", tx: " << tx_count << "\n";
 
-	Blockchain blockchain(3);
+    // --- Nuoseklus ---
+    {
+        std::mt19937 rng{ 3719 };
+        TestEnv env(difficulty, user_count, tx_count, rng);
 
-	BalanceState balances = {
-		{ 1, 100 },
-		{ 2, 0 },
-		{ 3, 0 }
-	};
+        auto candidates = env.miner.create_five_candidates(
+            env.balances,
+            env.blockchain.get_latest_hash(),
+            env.blockchain.get_included_transaction_ids(),
+            env.blockchain.get_included_sequences(),
+            difficulty);
 
-	const BalanceState original_balances = balances;
-	const std::size_t original_chain_size = blockchain.get_size();
+        RaceResult res = run_race(candidates, env.miner, false);
 
-	const auto original_ids =
-		blockchain.get_included_transaction_ids();
+        std::cout << std::fixed << std::setprecision(6);
+        std::cout << "[Nuoseklus]   laikas=" << res.wall_seconds
+            << " s, bandymai=" << res.total_attempts
+            << ", rastas=" << (res.found ? "taip" : "ne") << "\n";
+    }
 
-	const auto original_sequences =
-		blockchain.get_included_sequences();
+    // --- Lygiagretus ---
+    {
+        std::mt19937 rng{ 3719 };
+        TestEnv env(difficulty, user_count, tx_count, rng);
 
-	Transaction tx1(1, 2, 70, 1001);
-	Transaction tx2(1, 3, 60, 1002);
+        auto candidates = env.miner.create_five_candidates(
+            env.balances,
+            env.blockchain.get_latest_hash(),
+            env.blockchain.get_included_transaction_ids(),
+            env.blockchain.get_included_sequences(),
+            difficulty);
 
-	std::vector<Transaction> invalid_transactions = { tx1,tx2 };
+        RaceResult res = run_race(candidates, env.miner, true);
 
-	Miner miner;
-
-	Block invalid_block = miner.solve_puzzle(invalid_transactions, blockchain.get_latest_hash(), 3);
-
-	bool block_rejected = false;
-
-	try {
-		blockchain.add_block(invalid_block, balances);
-	}
-	catch (const std::exception& e) {
-		block_rejected = true;
-		std::cout << "block rejected: " << e.what() << '\n';
-	}
-
-	const bool balances_unchanged = balances == original_balances;
-
-	const bool chain_unchanged = blockchain.get_size() == original_chain_size;
-
-	const bool ids_unchanged = blockchain.get_included_transaction_ids() == original_ids;
-
-	const bool sequences_unchanged = blockchain.get_included_sequences() == original_sequences;
-
-	std::cout << "Block rejected: " << (block_rejected ? "pass" : "fail") << '\n';
-
-	std::cout << "Balances unchanged: " << (balances_unchanged ? "pass" : "fail") << '\n';
-
-	std::cout << "Blockchain unchanged: " << (chain_unchanged ? "pass" : "fail") << '\n';
-
-	std::cout << "Transaction IDs unchanged: " << (ids_unchanged ? "pass" : "fail") << '\n';
-
-	std::cout << "Sequences unchanged: " << (sequences_unchanged ? "pass" : "fail") << '\n';
-
-	print_balances(balances);
-
-	return block_rejected &&
-		balances_unchanged &&
-		chain_unchanged &&
-		ids_unchanged &&
-		sequences_unchanged;
+        std::cout << "[Lygiagretus] laikas=" << res.wall_seconds
+            << " s (sienos laikas), bandymai=" << res.total_attempts
+            << ", rastas=" << (res.found ? "taip" : "ne") << "\n";
+    }
 }
-
-//testing tx pool and mining
-bool test2(std::mt19937& rng)
-{
-	std::cout << "test 2\n";
-
-	constexpr std::uint64_t difficulty = 3;
-
-	Blockchain blockchain(difficulty);
-	Miner miner;
-
-	BalanceState balances = {
-		{ 1, 100 },
-		{ 2, 0 },
-		{ 3, 0 }
-	};
-
-	print_balances(balances);
-
-	//cant be in same block cause of amount
-	Transaction tx1(1, 2, 70, 1);
-	Transaction tx2(1, 3, 60, 2);
-
-	std::string reason;
-
-	bool tx1_accepted = miner.add_transaction(
-		tx1,
-		balances,
-		blockchain.get_included_transaction_ids(),
-		blockchain.get_included_sequences(),
-		reason
-	);
-
-	print_transaction_result("T1: A to B, 70", tx1_accepted, reason);
-
-	reason.clear();
-
-	bool tx2_accepted = miner.add_transaction(
-		tx2,
-		balances,
-		blockchain.get_included_transaction_ids(),
-		blockchain.get_included_sequences(),
-		reason
-	);
-
-	print_transaction_result("T2: A to C, 60", tx2_accepted, reason);
-
-	if (!tx1_accepted || !tx2_accepted)
-		return false;
-
-	std::cout << "\ntransactions in pool: " << miner.get_transaction_pool().size() << '\n';
-
-	//create and mine candidate block
-	Block accepted_block;
-	Miner::Balances proposed_balances;
-	std::vector<std::size_t> included_indices;
-
-	const bool candidate_created = miner.mine_next_block(
-		balances,
-		blockchain.get_latest_hash(),
-		blockchain.get_included_transaction_ids(),
-		blockchain.get_included_sequences(),
-		accepted_block,
-		proposed_balances,
-		included_indices,
-		difficulty
-	);
-
-	std::cout << "\ncandidate created: "
-		<< (candidate_created ? "yes" : "no") << '\n';
-
-	if (!candidate_created)
-		return false;
-
-	std::cout << "transactions included: "
-		<< accepted_block.get_transactions().size() << '\n';
-
-	std::cout << "mining attempts: "
-		<< miner.get_last_attempts() << '\n';
-
-	std::cout << "mining time: "
-		<< std::fixed << std::setprecision(6)
-		<< miner.get_last_mining_seconds()
-		<< " seconds\n";
-
-	//blockchain verification
-	try {
-		blockchain.add_block(accepted_block, balances);
-
-		//remove transactions after success
-		miner.commit_mined_transactions(included_indices);
-
-		std::cout << "\nblock accepted\n";
-	}
-	catch (const std::exception& e) {
-		std::cout << "\nblock rejected: " << e.what() << '\n';
-		return false;
-	}
-
-	std::cout << "\nremaining transactions in pool: "
-		<< miner.get_transaction_pool().size() << '\n';
-
-	std::cout << "blockchain size: "
-		<< blockchain.get_size() << '\n';
-
-	print_balances(balances);
-
-	return true;
-}
-
-
 int main()
 {
-	std::mt19937 rng{ static_cast<std::mt19937::result_type>(seed) };
+    constexpr std::uint64_t DIFFICULTY = 3;
+    constexpr std::size_t   USER_COUNT = 20;
+    constexpr std::size_t   TX_COUNT = 100;
 
-	bool candidates_test_passed = test_five_candidates(rng);
-	system("pause");
-	system("cls");
+    std::cout << "Lygiagretus kasimas v0.2\n";
+    std::cout << "Thread count: "
+        << std::thread::hardware_concurrency() << "\n";
 
-	bool merkle_tests_passed = test_merkle1(rng) && test_merkle2(rng);
+    const bool seq_ok = test_sequential(DIFFICULTY, USER_COUNT, TX_COUNT);
+    const bool par_ok = test_parallel(DIFFICULTY, USER_COUNT, TX_COUNT);
 
-	system("pause");
-	system("cls");
+    test_comparison(DIFFICULTY, USER_COUNT, TX_COUNT);
 
-	//block rejection test
-	bool test_1 = test1(rng);
+    std::cout << "\nnuoseklus vs lygiagretus\n";
+    std::cout << "Nuoseklus:    " << (seq_ok ? "praejo" : "nepraejo") << "\n";
+    std::cout << "Lygiagretus:  " << (par_ok ? "praejo" : "nepraejo") << "\n";
 
-	std::cout << "block rejection: " << (test_1 ? "pass" : "fail") << '\n';
-
-	system("pause");
-	system("cls");
-
-	//mining and tx pool
-	bool test_2 = test2(rng);
-
-	std::cout << "transaction pool and mining: " << (test_2 ? "pass" : "fail") << '\n';
-
-	return 1;
+    return (seq_ok && par_ok) ? 0 : 1;
 }
