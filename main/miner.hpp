@@ -15,7 +15,6 @@
 #include <functional>
 #include <chrono>
 
-
 struct MiningCandidate
 {
 	Block block;
@@ -29,6 +28,18 @@ struct MiningCandidate
 	bool exhausted = false; //no more candidate transactions
 };
 
+struct MiningCompetitionResult
+{
+	std::vector<MiningCandidate> candidates;
+
+	size_t winner_index = std::numeric_limits<size_t>::max();
+
+	bool winner_found = false;
+	bool search_limit_reached = false;
+
+	std::uint64_t total_attempts = 0;
+	double total_mining_seconds = 0.0;
+};
 
 struct Miner
 {
@@ -340,7 +351,7 @@ public:
 	}
 
 
-	bool mine_candidate_batch(MiningCandidate& candidate, std::uint64_t attempts_size){
+	bool mine_candidate_batch(MiningCandidate& candidate, std::uint64_t attempts_size) {
 		if (candidate.solved)
 			return true;
 
@@ -379,7 +390,7 @@ public:
 	}
 
 
-	void mine_candidates_round(std::vector<MiningCandidate>& candidates,std::uint64_t attempts_size){
+	void mine_candidates_round(std::vector<MiningCandidate>& candidates, std::uint64_t attempts_size) {
 		for (MiningCandidate& candidate : candidates)
 		{
 			if (candidate.solved || candidate.exhausted)
@@ -425,6 +436,100 @@ public:
 		return winner_index;
 	}
 
+
+	MiningCompetitionResult run_competition(const Balances& balances, const std::array<std::uint32_t, 8>& previous_hash,
+		const std::set<Hash>& included_transaction_ids, const std::set<std::uint64_t>& included_sequences,
+		std::uint64_t difficulty = 3)
+	{
+		constexpr std::uint64_t initial_budget = 10000;
+		constexpr std::uint64_t increased_budget = 20000;
+		constexpr std::uint64_t total_attempt_limit = 500000;
+
+		MiningCompetitionResult result;
+
+		result.candidates = create_five_candidates(
+			balances,
+			previous_hash,
+			included_transaction_ids,
+			included_sequences,
+			difficulty
+		);
+
+		const auto competition_start = std::chrono::steady_clock::now();
+
+		//1 to 5, same budget
+		mine_candidates_round(result.candidates, initial_budget);
+
+		while (true)
+		{
+			result.total_attempts = 0;
+			result.total_mining_seconds = 0.0;
+
+			for (const MiningCandidate& candidate : result.candidates)
+			{
+				result.total_attempts += candidate.attempts;
+				result.total_mining_seconds += candidate.mining_seconds;
+			}
+
+			result.winner_index = select_winner(result.candidates);
+
+			if (result.winner_index != std::numeric_limits<size_t>::max())
+			{
+				result.winner_found = true;
+				break;
+			}
+
+			if (result.total_attempts >= total_attempt_limit)
+			{
+				result.search_limit_reached = true;
+				break;
+			}
+
+			//search unsolved candidates
+			std::uint64_t remaining_budget = total_attempt_limit - result.total_attempts;
+
+			std::uint64_t next_budget = std::min(increased_budget, remaining_budget / 5);
+
+			if (next_budget == 0)
+			{
+				result.search_limit_reached = true;
+				break;
+			}
+
+			mine_candidates_round(result.candidates, next_budget);
+		}
+
+		return result;
+	}
+
+	void print_competition_results(const MiningCompetitionResult& result) const {
+		std::cout << "\n5 candidate batch mining results\n";
+
+		for (size_t i = 0; i < result.candidates.size(); ++i)
+		{
+			const MiningCandidate& candidate = result.candidates[i];
+
+			std::cout << "candidate num. " << i + 1 << "\n";
+			std::cout << "transactions: " << candidate.block.get_transactions().size() << "\n";
+			std::cout << "attempts: " << candidate.attempts << "\n";
+			std::cout << "mining time: " << candidate.mining_seconds << " s\n";
+			std::cout << "result: " << (candidate.solved ? "solved" : "not solved") << "\n";
+		}
+
+		std::cout << "\ntotal attempts: " << result.total_attempts << "\n";
+		std::cout << "total mining time: " << result.total_mining_seconds << " s\n";
+
+		if (result.winner_found)
+		{
+			std::cout << "winner winner chicken dinner: candidate num. " << result.winner_index + 1 << "\n";
+		}
+		else
+		{
+			std::cout << "no winner\n";
+		}
+
+		if (result.search_limit_reached) std::cout << "search limit\n";
+	}
 
 
 	//get remaining transaction pool

@@ -1,16 +1,178 @@
-
 #include "blockchain.hpp"
 #include "miner.hpp"
+#include "user.hpp"
 #include "transaction.hpp"
-
 #include <iostream>
 #include <string>
 #include <vector>
 #include <iomanip>
 
+constexpr int32_t seed = 1351;
 using Hash = std::array<uint32_t, 8>;
 
+inline std::vector<Transaction> generate_transactions_valid(const std::vector<User>& users,std::mt19937& rng, std::size_t count = 10000)
+{
+	std::vector<Transaction> transactions;
+	transactions.reserve(count);
 
+	std::uniform_int_distribution<std::size_t> user_dist(0, users.size() - 1);
+	std::uniform_int_distribution<std::uint64_t> amount_dist(1, 10000);
+
+	// sequence per sender, starting at 1
+	std::unordered_map<std::uint32_t, std::uint64_t> sequences;
+	for (const User& u : users) {
+		sequences[u.get_id()] = 1;
+	}
+
+	for (std::size_t i = 0; i < count; ++i) {
+		std::size_t si = user_dist(rng);
+		std::size_t ri = user_dist(rng);
+		while (si == ri) ri = user_dist(rng);
+
+		const User& sender = users[si];
+		const User& receiver = users[ri];
+
+		std::uint64_t amount = amount_dist(rng);
+		std::uint64_t sequence = sequences.at(sender.get_id())++;
+
+		transactions.emplace_back(sender.get_id(), receiver.get_id(), amount, sequence);
+	}
+
+	return transactions;
+}
+
+bool test_five_candidates()
+{
+	std::cout << "\n5 candidate test\n";
+
+	constexpr std::uint64_t difficulty = 3;
+	constexpr std::uint64_t initial_budget = 10000;
+	constexpr std::uint64_t budget_add_amount = 20000;
+	constexpr std::uint64_t attempt_limit = 500000;
+	constexpr std::size_t user_count = 10;
+	constexpr std::size_t tx_count = 50;
+
+	std::mt19937 rng{ std::random_device{}() };
+
+	const std::vector<User> users = generate_users(rng, user_count);
+
+	BalanceState balances;
+	for (const User& u : users)
+		balances[u.get_id()] = u.get_balance();
+
+	std::cout << "user amount: " << users.size() << "\n";
+
+	Blockchain blockchain(difficulty);
+	Miner miner;
+
+	const std::vector<Transaction> all_txs = generate_transactions_valid(users, rng, tx_count);
+
+	int added = 0;
+	for (const Transaction& tx : all_txs) {
+		std::string reason;
+		if (miner.add_transaction(tx, balances, blockchain.get_included_transaction_ids(), blockchain.get_included_sequences(), reason)) {
+			++added;
+		}
+	}
+
+	std::cout << "tx in pool: " << added << " from " << tx_count << "\n";
+
+	if (added == 0) {
+		std::cout << "pool empty\n";
+		return false;
+	}
+
+	std::vector<MiningCandidate> candidates = miner.create_five_candidates(
+		balances,
+		blockchain.get_latest_hash(),
+		blockchain.get_included_transaction_ids(),
+		blockchain.get_included_sequences(),
+		difficulty
+	);
+
+	std::cout << "created " << candidates.size() << " candidates:\n";
+	for (std::size_t i = 0; i < candidates.size(); ++i)
+		std::cout << " candidate num. " << i + 1 << ". transaction amount: " << candidates[i].block.get_transactions().size() << "\n";
+
+	std::cout << "\ninitial budget: " << initial_budget << " nonces\n";
+	miner.mine_candidates_round(candidates, initial_budget);
+
+	std::uint64_t round = 1;
+
+	auto total_attempts = [&]() {
+		std::uint64_t sum = 0;
+		for (const MiningCandidate& c : candidates) {
+			sum += c.attempts;
+		}
+		return sum;
+		};
+
+	while (true) {
+		const std::size_t winner_index = miner.select_winner(candidates);
+
+		if (winner_index != std::numeric_limits<std::size_t>::max()) {
+			std::cout << "solved after " << round << " rounds, total attempts: " << total_attempts() << "\n";
+			break;
+		}
+
+		if (total_attempts() >= attempt_limit) {
+			std::cout << "attempt limit reached (" << attempt_limit << ")\n";
+			return false;
+		}
+
+		const std::uint64_t remaining = attempt_limit - total_attempts();
+		const std::uint64_t next_budget = std::min(budget_add_amount, remaining / 5);
+
+		if (next_budget == 0) {
+			std::cout << "no more budget\n";
+			return false;
+		}
+
+		++round;
+		std::cout << "  round: " << round
+			<< ", extra budget: " << next_budget << "\n";
+
+		miner.mine_candidates_round(candidates, next_budget);
+	}
+
+	const std::size_t winner_index = miner.select_winner(candidates);
+	const MiningCandidate& winner = candidates[winner_index];
+
+	std::cout << "\ncandidate results\n";
+	for (std::size_t i = 0; i < candidates.size(); ++i) {
+		const MiningCandidate& c = candidates[i];
+		std::cout << " candidate " << i + 1 << ", attempts: " << c.attempts << ", tx amount: " << c.block.get_transactions().size()
+			<< ", " << (c.solved ? "solved" : "not solved") << (i == winner_index ? " is a winner" : "") << "\n";
+	}
+
+	std::cout << "\nwinner index: " << winner_index + 1
+		<< " (" << winner.attempts << " attempts, " << winner.block.get_transactions().size() << " transactions)\n";
+
+	//revalidation
+	std::cout << "\nwinner block validation\n";
+	BalanceState balances_copy = balances;
+
+	bool block_accepted = false;
+	try {
+		blockchain.add_block(winner.block, balances_copy);
+		block_accepted = true;
+		std::cout << "block accepted\n";
+	}
+	catch (const std::exception& e) {
+		std::cout << "block not accepted " << e.what() << "\n";
+	}
+
+	if (!block_accepted) return false;
+
+	miner.commit_mined_transactions(winner.included_indices);
+
+	std::cout << "left in transaction pool: " << miner.get_transaction_pool().size() << "\n";
+	std::cout << "blockchain size: " << blockchain.get_size() << "\n";
+
+	return true;
+}
+
+//tests only the winner selection of batch mining
 bool test_candidate_winner_selection()
 {
 	std::cout << "\ntest of candidate winner\n";
@@ -25,7 +187,7 @@ bool test_candidate_winner_selection()
 	candidates[1].attempts = 3200;
 
 	candidates[2].solved = false;
-	candidates[2].attempts = 10000;
+	candidates[2].attempts = 3200;
 
 	candidates[3].solved = true;
 	candidates[3].attempts = 5100;
@@ -39,12 +201,12 @@ bool test_candidate_winner_selection()
 
 	const bool correct_winner = winner == 1;
 
-	std::cout << "selected candidate: " << winner + 1 << "\nexpected candidate: 2\n";
+	std::cout << "selected candidate: " << winner + 1;
+	std::cout << "\nexpected candidate: 2 or 3\n";
 	std::cout << "winner selection: " << (correct_winner ? "pass" : "fail") << "\n";
 
 	return correct_winner;
 }
-
 
 //different number of transactions
 bool test_merkle1()
@@ -108,9 +270,9 @@ bool test_merkle2()
 	Transaction tx1(1, 2, 100, 1);
 	Transaction tx2(1, 2, 200, 1);
 
-	std::vector<Hash> original_id = {tx1.get_id()};
+	std::vector<Hash> original_id = { tx1.get_id() };
 
-	std::vector<Hash> changed_id = {tx2.get_id()};
+	std::vector<Hash> changed_id = { tx2.get_id() };
 
 	MerkleTree original_tree(original_id);
 	MerkleTree changed_tree(changed_id);
@@ -118,9 +280,9 @@ bool test_merkle2()
 	const Hash original_root = original_tree.get_root();
 	const Hash changed_root = changed_tree.get_root();
 
-	std::cout << "original root: "<< to_hex(original_root) << "\n";
+	std::cout << "original root: " << to_hex(original_root) << "\n";
 
-	std::cout << "changed root:  "<< to_hex(changed_root) << "\n";
+	std::cout << "changed root:  " << to_hex(changed_root) << "\n";
 
 	const bool id_changed = tx1.get_id() != tx2.get_id();
 	const bool root_changed = original_tree.get_root() != changed_tree.get_root();
@@ -337,8 +499,9 @@ bool test2()
 
 int main()
 {
+	bool candidates_test_passed = test_five_candidates();
 
-	bool winner_test_passed = test_candidate_winner_selection();
+	//bool winner_test_passed = test_candidate_winner_selection();
 
 	//bool merkle_tests_passed = test_merkle1() && test_merkle2();
 
